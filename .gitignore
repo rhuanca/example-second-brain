@@ -1,0 +1,15 @@
+# Secrets / local config
+.env
+
+# Obsidian vault (data, not code) — keep out of the repo
+/vault/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+
+# OS
+.DS_Store
