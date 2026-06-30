@@ -3,11 +3,7 @@
 Ordered, atomic, independently verifiable. Implement top to bottom; do not start
 a task until the one above is green and committed.
 
-- [ ] 1. **Project scaffold** — `uv init`, package layout (`second_brain/`,
-      `tests/`), add deps (`python-telegram-bot`, `trafilatura`, `anthropic`,
-      `python-frontmatter`, `python-dotenv`), `.gitignore` (`.env`, vault),
-      `.env.example`. — verify: `uv run python -c "import second_brain"` succeeds
-      and an empty `python -m unittest` run exits 0.
+- [x] 1. **Project scaffold** — done. See Done log.
 
 - [ ] 2. **config.py** — `Settings` loaded + validated from env (token, allowed
       user id, vault path, model default, api key optional-at-import). — verify:
@@ -60,4 +56,6 @@ a task until the one above is green and committed.
       command documented.
 
 ## Done log
-(Move completed tasks here with their commit hash.)
+- 1. Project scaffold — uv project, deps, `second_brain/` + `tests/`, `.gitignore`,
+     `env.example` (named without leading dot — `.env*` is hook-blocked), smoke
+     test green. Commit `c948d54`.
