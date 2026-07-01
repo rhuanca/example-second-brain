@@ -9,11 +9,7 @@ a task until the one above is green and committed.
 
 - [x] 3. **urls.py** — done. See Done log.
 
-- [ ] 4. **vault.py: routing, slug, render** — PARA folder routing (default
-      Resources), filename slug from title+date, render Markdown note with YAML
-      frontmatter (title, source, date, para, tags). — verify: unittest: rendered
-      note round-trips through `frontmatter.loads`; routing picks correct folder;
-      slug is filesystem-safe.
+- [x] 4. **vault.py: routing, slug, render** — done. See Done log.
 
 - [ ] 5. **vault.py: write + dedup** — ensure PARA folders exist under VAULT_PATH;
       `is_duplicate(url)` scans existing notes' `source`; `write_note()` writes to
@@ -60,3 +56,6 @@ a task until the one above is green and committed.
 - 3. urls.py — `extract_url` (first http(s) URL, trailing-punct trim) +
      `normalize_url` (lowercase scheme/host, drop fragment + tracking params,
      strip trailing slash). 24 tests green. Commit `b0eba89`.
+- 4. models.py (`Para` enum + `Summary` dataclass, shared) and vault.py pure
+     pieces — `folder_for`, `slugify`, `note_filename`, `render_note` (frontmatter
+     + TL;DR/points/prototype sections). 34 tests green. Commit `113b132`.

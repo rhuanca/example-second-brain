@@ -8,10 +8,13 @@ from __future__ import annotations
 
 import datetime as _dt
 import re
+from collections.abc import Iterator
+from pathlib import Path
 
 import frontmatter
 
 from second_brain.models import Para, Summary
+from second_brain.urls import normalize_url
 
 # PARA category -> folder name inside the vault.
 PARA_FOLDERS: dict[Para, str] = {
@@ -64,3 +67,85 @@ def render_note(summary: Summary, source_url: str, date: _dt.date) -> str:
         tags=list(summary.tags),
     )
     return frontmatter.dumps(post)
+
+
+class DuplicateNoteError(Exception):
+    """Raised when a note for the same source URL already exists in the vault."""
+
+    def __init__(self, url: str, existing: Path):
+        super().__init__(f"URL already saved: {url} -> {existing}")
+        self.url = url
+        self.existing = existing
+
+
+class Vault:
+    """A dedicated Obsidian vault rooted at a directory on disk."""
+
+    def __init__(self, root: Path):
+        self.root = Path(root)
+
+    def ensure_folders(self) -> None:
+        """Create the vault root and all PARA folders if they don't exist."""
+        for folder in PARA_FOLDERS.values():
+            (self.root / folder).mkdir(parents=True, exist_ok=True)
+
+    def iter_notes(self) -> Iterator[Path]:
+        """Yield every Markdown note path across the PARA folders."""
+        for folder in PARA_FOLDERS.values():
+            yield from (self.root / folder).glob("*.md")
+
+    def find_by_url(self, url: str) -> Path | None:
+        """Return the note whose `source` matches `url` (normalized), else None."""
+        target = normalize_url(url)
+        for note in self.iter_notes():
+            source = _read_source(note)
+            if source and normalize_url(source) == target:
+                return note
+        return None
+
+    def is_duplicate(self, url: str) -> bool:
+        return self.find_by_url(url) is not None
+
+    def write_note(
+        self, summary: Summary, source_url: str, date: _dt.date
+    ) -> Path:
+        """Render and write a note; refuse if the URL is already saved.
+
+        Returns the path of the written note. Raises DuplicateNoteError if a note
+        for the same source URL already exists.
+        """
+        existing = self.find_by_url(source_url)
+        if existing is not None:
+            raise DuplicateNoteError(source_url, existing)
+
+        folder = self.root / folder_for(summary.para)
+        folder.mkdir(parents=True, exist_ok=True)
+        path = _unique_path(folder, note_filename(summary.title, date))
+        path.write_text(render_note(summary, source_url, date), encoding="utf-8")
+        return path
+
+
+def _unique_path(folder: Path, filename: str) -> Path:
+    """Return a non-colliding path in `folder`, suffixing -2, -3, ... if needed.
+
+    Two different articles can share a title+date and thus a slug; this keeps both
+    notes instead of one silently overwriting the other.
+    """
+    path = folder / filename
+    if not path.exists():
+        return path
+    stem = path.stem
+    for n in range(2, 1000):
+        candidate = folder / f"{stem}-{n}.md"
+        if not candidate.exists():
+            return candidate
+    raise FileExistsError(f"Too many filename collisions for {filename}")
+
+
+def _read_source(note: Path) -> str | None:
+    try:
+        post = frontmatter.load(str(note))
+    except Exception:
+        return None
+    source = post.get("source")
+    return source if isinstance(source, str) else None
