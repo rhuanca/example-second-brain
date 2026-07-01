@@ -7,10 +7,7 @@ a task until the one above is green and committed.
 
 - [x] 2. **config.py** — done. See Done log.
 
-- [ ] 3. **urls.py** — extract first URL from text; normalize (strip tracking
-      params + trailing slash) for a stable dedup key; return None when no URL. —
-      verify: unittest over messages with/without URLs, tracking params, trailing
-      slashes.
+- [x] 3. **urls.py** — done. See Done log.
 
 - [ ] 4. **vault.py: routing, slug, render** — PARA folder routing (default
       Resources), filename slug from title+date, render Markdown note with YAML
@@ -60,3 +57,6 @@ a task until the one above is green and committed.
      vault path resolved to absolute, positive user-id guard, api key optional.
      12 tests green. Review: no blockers; addressed relative-path resolve.
      Commit `7f74908`.
+- 3. urls.py — `extract_url` (first http(s) URL, trailing-punct trim) +
+     `normalize_url` (lowercase scheme/host, drop fragment + tracking params,
+     strip trailing slash). 24 tests green. Commit `b0eba89`.
