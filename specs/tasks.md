@@ -5,10 +5,7 @@ a task until the one above is green and committed.
 
 - [x] 1. **Project scaffold** — done. See Done log.
 
-- [ ] 2. **config.py** — `Settings` loaded + validated from env (token, allowed
-      user id, vault path, model default, api key optional-at-import). — verify:
-      unittest: valid env → Settings populated; missing required var → clear error;
-      model defaults applied.
+- [x] 2. **config.py** — done. See Done log.
 
 - [ ] 3. **urls.py** — extract first URL from text; normalize (strip tracking
       params + trailing slash) for a stable dedup key; return None when no URL. —
@@ -59,3 +56,7 @@ a task until the one above is green and committed.
 - 1. Project scaffold — uv project, deps, `second_brain/` + `tests/`, `.gitignore`,
      `env.example` (named without leading dot — `.env*` is hook-blocked), smoke
      test green. Commit `c948d54`.
+- 2. config.py — frozen `Settings` dataclass, `from_env()` with validation;
+     vault path resolved to absolute, positive user-id guard, api key optional.
+     12 tests green. Review: no blockers; addressed relative-path resolve.
+     Commit `7f74908`.
