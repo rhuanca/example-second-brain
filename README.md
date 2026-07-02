@@ -1,9 +1,9 @@
 # Second Brain Telegram Bot
 
-Send a link to your Telegram bot → it fetches the article, writes a **technical
-summary** with Claude, replies to you in the chat, and files a Markdown note into
-a dedicated **Obsidian** vault (organized PARA-style). Review and remix your
-reading later in Obsidian.
+Send a link to your Telegram bot → it fetches the article (or a **YouTube
+video's transcript**), writes a **technical summary** with Claude, replies to you
+in the chat, and files a Markdown note into a dedicated **Obsidian** vault
+(organized PARA-style). Review and remix your reading later in Obsidian.
 
 ```
 Telegram message → extract URL → fetch article → summarize (Claude)
@@ -48,6 +48,9 @@ You'll get a summary reply, and a note will appear under
 
 - Re-sending the same link → "already in your second brain", no duplicate note.
 - Sending a non-link message → a short usage hint, no note.
+- **YouTube links** are summarized from the video's transcript. If a video has no
+  usable transcript (captions disabled/unavailable), the bot says so and saves
+  nothing.
 
 ## Notes & PARA
 
@@ -93,6 +96,8 @@ and Telegram are mocked. Only the live run above needs real credentials.
 - `second_brain/config.py` — settings from environment
 - `second_brain/urls.py` — extract + normalize URLs (dedup key)
 - `second_brain/fetcher.py` — article extraction (trafilatura)
+- `second_brain/youtube.py` — YouTube detection + transcript fetch
+- `second_brain/sources.py` — routes a URL to the article or YouTube fetcher
 - `second_brain/summarizer.py` — Claude summary → structured `Summary`
 - `second_brain/vault.py` — PARA routing, note rendering, write + dedup
 - `second_brain/bot.py` — capture pipeline + Telegram wiring

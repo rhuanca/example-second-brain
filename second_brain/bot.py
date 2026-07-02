@@ -14,7 +14,7 @@ from pathlib import Path
 
 from second_brain.config import Settings
 from second_brain.fetcher import FetchError
-from second_brain.fetcher import fetch as default_fetch
+from second_brain.sources import fetch as default_fetch
 from second_brain.summarizer import SummarizerError
 from second_brain.summarizer import summarize as default_summarize
 from second_brain.urls import extract_url
