@@ -18,8 +18,13 @@ Tip: back up or commit the vault before --apply (moves touch your real notes).
 from __future__ import annotations
 
 import argparse
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+
+# Make `second_brain` importable when this file is run as a script (Python puts
+# the script's own dir on sys.path, not the project root).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import frontmatter
 
