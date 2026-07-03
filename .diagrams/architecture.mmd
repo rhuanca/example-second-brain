@@ -1,6 +1,9 @@
 flowchart TD
-    tg["Telegram — you send a link"] --> bot["bot.py — allow-list + async handler"]
+    tg["Telegram — link or /ask"] --> bot["bot.py — allow-list + async handlers"]
     bot --> handle["handle_url — capture pipeline"]
+    bot --> ask["ask.py — /ask retrieve + answer"]
+    ask --> vault
+    ask --> claude
     handle --> urls["urls.py — extract + normalize"]
     handle --> sources["sources.py — dispatch by source"]
     handle --> summarizer["summarizer.py — Claude → Summary"]

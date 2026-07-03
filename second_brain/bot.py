@@ -13,6 +13,7 @@ import functools
 from dataclasses import dataclass
 from pathlib import Path
 
+from second_brain.ask import ask as default_ask
 from second_brain.config import Settings
 from second_brain.fetcher import FetchError
 from second_brain.sources import fetch as default_fetch
@@ -121,12 +122,13 @@ def is_allowed(user_id: int | None, settings: Settings) -> bool:
 
 def build_application(settings: Settings, vault: Vault):
     """Build a python-telegram-bot Application wired to the capture pipeline."""
-    from telegram.ext import Application, MessageHandler, filters
+    from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
     # Bind the Medium cookie into the fetch so the pipeline keeps its fetch(url) shape.
     fetch = functools.partial(default_fetch, medium_cookie=settings.medium_cookie)
 
     app = Application.builder().token(settings.telegram_bot_token).build()
+    app.add_handler(CommandHandler("ask", make_ask_handler(settings, vault)))
     app.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
@@ -169,3 +171,41 @@ def make_handler(
         await message.reply_text(result.reply)
 
     return handle
+
+
+ASK_USAGE = (
+    "Ask about your saved notes, e.g. /ask what have I saved about agent memory?"
+)
+
+
+def make_ask_handler(settings: Settings, vault: Vault, *, run_ask=default_ask):
+    """Create the async /ask command handler (allow-list enforced)."""
+
+    async def handle(update, context):
+        user = update.effective_user
+        if user is None or not is_allowed(user.id, settings):
+            return
+        message = update.effective_message
+        if message is None:
+            return
+        question = _strip_command(message.text)
+        if not question:
+            await message.reply_text(ASK_USAGE)
+            return
+        reply = await asyncio.to_thread(
+            run_ask, question, vault=vault, settings=settings
+        )
+        await message.reply_text(reply)
+
+    return handle
+
+
+def _strip_command(text: str | None) -> str:
+    """Return the argument text after a leading /command, else the text itself."""
+    if not text:
+        return ""
+    stripped = text.strip()
+    if stripped.startswith("/"):
+        parts = stripped.split(maxsplit=1)
+        return parts[1].strip() if len(parts) > 1 else ""
+    return stripped

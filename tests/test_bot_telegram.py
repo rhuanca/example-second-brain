@@ -4,7 +4,13 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from second_brain.bot import NO_URL_MESSAGE, is_allowed, make_handler
+from second_brain.bot import (
+    ASK_USAGE,
+    NO_URL_MESSAGE,
+    is_allowed,
+    make_ask_handler,
+    make_handler,
+)
 from second_brain.config import Settings
 from second_brain.vault import Vault
 
@@ -84,6 +90,45 @@ class AllowListTest(unittest.TestCase):
         self.assertEqual(len(message.replies), 1)
         self.assertIn("Agentic Patterns", message.replies[0])
         self.assertEqual(len(list(self.vault.iter_notes())), 1)
+
+
+class AskHandlerTest(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.settings = _settings(self._tmp.name)
+        self.vault = Vault(Path(self._tmp.name))
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_answers_owner_question(self):
+        seen = {}
+
+        def fake_ask(question, *, vault, settings):
+            seen["q"] = question
+            return "here is your answer"
+
+        handler = make_ask_handler(self.settings, self.vault, run_ask=fake_ask)
+        update, message = _update(42, "/ask what about agent memory?")
+        asyncio.run(handler(update, None))
+        self.assertEqual(message.replies, ["here is your answer"])
+        self.assertEqual(seen["q"], "what about agent memory?")
+
+    def test_empty_question_shows_usage(self):
+        handler = make_ask_handler(
+            self.settings, self.vault, run_ask=lambda *a, **k: "should not run"
+        )
+        update, message = _update(42, "/ask")
+        asyncio.run(handler(update, None))
+        self.assertEqual(message.replies, [ASK_USAGE])
+
+    def test_ignores_other_users(self):
+        handler = make_ask_handler(
+            self.settings, self.vault, run_ask=lambda *a, **k: "nope"
+        )
+        update, message = _update(99, "/ask anything")
+        asyncio.run(handler(update, None))
+        self.assertEqual(message.replies, [])
 
 
 if __name__ == "__main__":

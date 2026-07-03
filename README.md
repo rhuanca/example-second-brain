@@ -49,6 +49,9 @@ You'll get a summary reply, and a note will appear under
 `<VAULT_PATH>/` (open the vault in Obsidian to browse).
 
 - Re-sending the same link → "already in your second brain", no duplicate note.
+- **Ask your notes:** `/ask what have I saved about agent memory?` → the bot
+  searches your saved notes and answers with Claude, citing the notes it used
+  (see "Ask your second brain" below).
 - Sending a non-link message → a short usage hint, no note.
 - **YouTube links** are summarized from the video's transcript. If a video has no
   usable transcript (captions disabled/unavailable), the bot says so and saves
@@ -98,6 +101,20 @@ uv run python -m unittest discover -s tests
 The full suite runs without a Telegram token or API key — the network, the LLM,
 and Telegram are mocked. Only the live run above needs real credentials.
 
+## Ask your second brain
+
+Query what you've saved, right from Telegram:
+
+```
+/ask what have I saved about agent memory?
+```
+
+The bot does a keyword search over your notes (title, tags, body), feeds the best
+matches to Claude, and replies with an answer that **cites the notes it used**. If
+nothing matches, it says so rather than guessing. Retrieval is intentionally simple
+(lexical) for now and lives behind one `ask()` entry point, so it can be upgraded to
+semantic search later without touching the command.
+
 ## Architecture
 
 Every fetcher returns the same `Article`, so the pipeline is source-agnostic —
@@ -105,8 +122,11 @@ adding a source is a new module plus one line in `sources.py`.
 
 ```mermaid
 flowchart TD
-    tg["Telegram — you send a link"] --> bot["bot.py — allow-list + async handler"]
+    tg["Telegram — link or /ask"] --> bot["bot.py — allow-list + async handlers"]
     bot --> handle["handle_url — capture pipeline"]
+    bot --> ask["ask.py — /ask retrieve + answer"]
+    ask --> vault
+    ask --> claude
     handle --> urls["urls.py — extract + normalize"]
     handle --> sources["sources.py — dispatch by source"]
     handle --> summarizer["summarizer.py — Claude → Summary"]
@@ -155,11 +175,13 @@ flowchart TD
 
 ## Roadmap
 
-- **Phase 2 — Ask your second brain:** query your saved notes from the same
-  Telegram bot ("what have I saved about agent memory?") via search/RAG over the
-  vault. Designed toward, not built yet.
-- **Cloud:** the bot is env-driven and docker-aware, so hosting it on a server
-  (always-on) is a later, mechanical step.
+- **Ask your second brain — done (lexical):** `/ask` searches notes by keyword and
+  answers with Claude. Next: upgrade retrieval to semantic search if keyword
+  matching starts missing things.
+- **Resurfacing:** a weekly digest or `/spark` command to resurface saved notes so
+  the library doesn't go stale.
+- **Cloud:** the bot is env-driven, so hosting it on an always-on server is a later,
+  mechanical step.
 
 ## Project layout
 
@@ -171,6 +193,7 @@ flowchart TD
 - `second_brain/sources.py` — routes a URL to the article / YouTube / Medium fetcher
 - `second_brain/summarizer.py` — Claude summary → structured `Summary`
 - `second_brain/vault.py` — note rendering, flat write + dedup
+- `second_brain/ask.py` — retrieval + Claude answer for `/ask`
 - `second_brain/bot.py` — capture pipeline + Telegram wiring
 - `second_brain/main.py` — entry point (long-polling)
 - `specs/` — the spec, plan, and task breakdown (spec-driven development)
