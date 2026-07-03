@@ -1,0 +1,17 @@
+flowchart TD
+    msg["Incoming message — text from Telegram"] --> extract["extract_url — normalize → dedup key"]
+    extract --> dedup["find_by_url — already saved? → stop"]
+    dedup --> dispatch["sources.fetch — pick the source"]
+    dispatch --> yt["YouTube — transcript → Article"]
+    dispatch --> md["Medium — cookie HTML → Article"]
+    dispatch --> art["Article — trafilatura → Article"]
+    yt --> sum["summarize — Claude → Summary"]
+    md --> sum
+    art --> sum
+    sum --> write["write_note — PARA + frontmatter"]
+    write --> done["Reply + note saved"]
+
+    classDef focal fill:#fdecc8,stroke:#e0a93f,color:#7a4b00;
+    classDef ext fill:#eeeeee,stroke:#bbbbbb,color:#333333;
+    class done focal;
+    class yt,md,art ext;

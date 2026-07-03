@@ -97,6 +97,61 @@ uv run python -m unittest discover -s tests
 The full suite runs without a Telegram token or API key — the network, the LLM,
 and Telegram are mocked. Only the live run above needs real credentials.
 
+## Architecture
+
+Every fetcher returns the same `Article`, so the pipeline is source-agnostic —
+adding a source is a new module plus one line in `sources.py`.
+
+```mermaid
+flowchart TD
+    tg["Telegram — you send a link"] --> bot["bot.py — allow-list + async handler"]
+    bot --> handle["handle_url — capture pipeline"]
+    handle --> urls["urls.py — extract + normalize"]
+    handle --> sources["sources.py — dispatch by source"]
+    handle --> summarizer["summarizer.py — Claude → Summary"]
+    handle --> vault["vault.py — render + dedup + write"]
+    sources --> youtube["youtube.py — transcript"]
+    sources --> medium["medium.py — cookie fetch"]
+    sources --> fetcher["fetcher.py — trafilatura"]
+    summarizer --> claude["Claude API"]
+    vault --> obsidian["Obsidian vault — PARA markdown"]
+    youtube --> yt["YouTube"]
+    medium --> md["Medium"]
+    fetcher --> web["Web"]
+
+    classDef focal fill:#fdecc8,stroke:#e0a93f,color:#7a4b00;
+    classDef ext fill:#eeeeee,stroke:#bbbbbb,color:#333333;
+    class handle focal;
+    class tg,claude,obsidian,yt,md,web ext;
+```
+
+Data flow for one message — the branch (YouTube / Medium / Article) re-converges
+because each produces an `Article`. Any failure short-circuits to a clear reply,
+and the note write is always last (so no partial notes):
+
+```mermaid
+flowchart TD
+    msg["Incoming message — text from Telegram"] --> extract["extract_url — normalize → dedup key"]
+    extract --> dedup["find_by_url — already saved? → stop"]
+    dedup --> dispatch["sources.fetch — pick the source"]
+    dispatch --> yt["YouTube — transcript → Article"]
+    dispatch --> md["Medium — cookie HTML → Article"]
+    dispatch --> art["Article — trafilatura → Article"]
+    yt --> sum["summarize — Claude → Summary"]
+    md --> sum
+    art --> sum
+    sum --> write["write_note — PARA + frontmatter"]
+    write --> done["Reply + note saved"]
+
+    classDef focal fill:#fdecc8,stroke:#e0a93f,color:#7a4b00;
+    classDef ext fill:#eeeeee,stroke:#bbbbbb,color:#333333;
+    class done focal;
+    class yt,md,art ext;
+```
+
+> Diagram sources live in `.diagrams/` as Mermaid (`.mmd`) — the same content as
+> the blocks above, ready to paste into an Obsidian note.
+
 ## Roadmap
 
 - **Phase 2 — Ask your second brain:** query your saved notes from the same

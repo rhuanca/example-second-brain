@@ -11,5 +11,10 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 
+# Generated diagram renders (keep the .mmd sources)
+.diagrams/*.svg
+.diagrams/*.png
+.diagrams/*.json
+
 # OS
 .DS_Store
