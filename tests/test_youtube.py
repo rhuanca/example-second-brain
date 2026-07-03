@@ -1,9 +1,20 @@
 import unittest
 
+from types import SimpleNamespace
+
 from second_brain.fetcher import Article, FetchError
-from second_brain.youtube import fetch_transcript, is_youtube_url, video_id
+from second_brain.youtube import (
+    fetch_transcript,
+    is_youtube_url,
+    supadata_transcript,
+    video_id,
+)
 
 VID = "dQw4w9WgXcQ"  # 11 chars
+
+
+def _resp(status=200, json_body=None):
+    return SimpleNamespace(status_code=status, json=lambda: (json_body or {}))
 
 
 class VideoIdTest(unittest.TestCase):
@@ -90,6 +101,54 @@ class FetchTranscriptTest(unittest.TestCase):
     def test_not_a_video_url_raises(self):
         with self.assertRaises(FetchError):
             fetch_transcript("https://example.com/post")
+
+    def test_uses_supadata_when_api_key_set(self):
+        seen = {}
+
+        def fake_get(url, **kwargs):
+            seen.update(url=url, **kwargs)
+            return _resp(json_body={"content": "transcript via supadata"})
+
+        article = fetch_transcript(
+            f"https://youtu.be/{VID}",
+            api_key="KEY",
+            get=fake_get,
+            get_title=lambda vid, url: "Some Video",
+        )
+        self.assertEqual(article.text, "transcript via supadata")
+        self.assertEqual(seen["headers"], {"x-api-key": "KEY"})
+        self.assertIn(VID, seen["params"]["url"])
+
+
+class SupadataTranscriptTest(unittest.TestCase):
+    def test_returns_content(self):
+        text = supadata_transcript(
+            VID, "KEY", get=lambda url, **k: _resp(json_body={"content": "hello"})
+        )
+        self.assertEqual(text, "hello")
+
+    def test_202_is_a_clear_error(self):
+        with self.assertRaises(FetchError) as ctx:
+            supadata_transcript(VID, "KEY", get=lambda url, **k: _resp(status=202))
+        self.assertIn("generated", str(ctx.exception).lower())
+
+    def test_404_and_403_map_to_fetcherror(self):
+        for status in (404, 403, 500):
+            with self.assertRaises(FetchError):
+                supadata_transcript(VID, "KEY", get=lambda url, **k: _resp(status=status))
+
+    def test_empty_content_raises(self):
+        with self.assertRaises(FetchError):
+            supadata_transcript(
+                VID, "KEY", get=lambda url, **k: _resp(json_body={"content": "  "})
+            )
+
+    def test_network_error_becomes_fetcherror(self):
+        def boom(url, **k):
+            raise ConnectionError("down")
+
+        with self.assertRaises(FetchError):
+            supadata_transcript(VID, "KEY", get=boom)
 
 
 if __name__ == "__main__":

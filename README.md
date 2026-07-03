@@ -48,14 +48,19 @@ Then, from the Telegram account whose id you configured, send the bot a link.
 You'll get a summary reply, and a note will appear under
 `<VAULT_PATH>/` (open the vault in Obsidian to browse).
 
+- While it works (fetching, summarizing, or answering), the bot shows Telegram's
+  **"typing…"** indicator so you know your message was received.
 - Re-sending the same link → "already in your second brain", no duplicate note.
 - **Ask your notes:** `/ask what have I saved about agent memory?` → the bot
   searches your saved notes and answers with Claude, citing the notes it used
   (see "Ask your second brain" below).
 - Sending a non-link message → a short usage hint, no note.
-- **YouTube links** are summarized from the video's transcript. If a video has no
-  usable transcript (captions disabled/unavailable), the bot says so and saves
-  nothing.
+- **YouTube links** are summarized from the video's transcript. By default it uses
+  the local `youtube-transcript-api`; set `SUPADATA_API_KEY` to fetch via
+  [Supadata](https://supadata.ai) instead, whose servers avoid the YouTube IP block
+  that hits the local library from cloud/VPS hosts (and can even AI-generate a
+  transcript for caption-less videos). If no transcript can be produced, the bot
+  says so and saves nothing.
 - **Medium links** work out of the box for free posts. For **member-only**
   articles, set `MEDIUM_COOKIE` (see below) so the bot fetches the full text you
   pay for; without it, member-only links only yield the public teaser.

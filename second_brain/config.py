@@ -31,6 +31,7 @@ class Settings:
     anthropic_model: str = DEFAULT_MODEL
     anthropic_api_key: str | None = None
     medium_cookie: str | None = None
+    supadata_api_key: str | None = None
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "Settings":
@@ -65,6 +66,7 @@ class Settings:
         model = env.get("ANTHROPIC_MODEL", "").strip() or DEFAULT_MODEL
         api_key = env.get("ANTHROPIC_API_KEY", "").strip() or None
         medium_cookie = env.get("MEDIUM_COOKIE", "").strip() or None
+        supadata_api_key = env.get("SUPADATA_API_KEY", "").strip() or None
 
         return cls(
             telegram_bot_token=token,
@@ -73,6 +75,7 @@ class Settings:
             anthropic_model=model,
             anthropic_api_key=api_key,
             medium_cookie=medium_cookie,
+            supadata_api_key=supadata_api_key,
         )
 
 

@@ -41,18 +41,25 @@ def is_youtube_url(url: str) -> bool:
     return video_id(url) is not None
 
 
-def fetch_transcript(url: str, *, get_transcript=None, get_title=None) -> Article:
+def fetch_transcript(
+    url: str, *, api_key=None, get=None, get_transcript=None, get_title=None
+) -> Article:
     """Return an Article whose text is the video transcript.
 
-    `get_transcript`/`get_title` are injectable for testing. Raises FetchError if
-    the URL isn't a video or has no usable transcript (captions disabled, none
-    available, region/age blocked, etc.).
+    Transcript source: if `api_key` is set, use Supadata (its servers fetch the
+    transcript, avoiding IP blocks); otherwise use youtube-transcript-api locally.
+    `get` (HTTP getter), `get_transcript`, and `get_title` are injectable for tests.
+    Raises FetchError if the URL isn't a video or has no usable transcript.
     """
     vid = video_id(url)
     if vid is None:
         raise FetchError(f"Not a recognizable YouTube video URL: {url}")
 
-    get_transcript = get_transcript or _default_transcript
+    if get_transcript is None:
+        if api_key:
+            get_transcript = lambda v: supadata_transcript(v, api_key, get=get)  # noqa: E731
+        else:
+            get_transcript = _default_transcript
     get_title = get_title or _default_title
 
     try:
@@ -96,6 +103,47 @@ def _default_transcript(video_id: str) -> str:
 
     fetched = YouTubeTranscriptApi().fetch(video_id)
     return " ".join(snippet.text for snippet in fetched)
+
+
+def supadata_transcript(video_id: str, api_key: str, *, get=None) -> str:
+    """Fetch the transcript text from Supadata (mode=auto, plain text).
+
+    Supadata fetches on its own infrastructure, so it isn't subject to the YouTube
+    IP block that hits youtube-transcript-api from cloud hosts. Raises FetchError
+    with a clear message on any failure.
+    """
+    get = get or _default_get
+    watch_url = f"https://www.youtube.com/watch?v={video_id}"
+    try:
+        resp = get(
+            "https://api.supadata.ai/v1/transcript",
+            params={"url": watch_url, "text": "true"},
+            headers={"x-api-key": api_key},
+            timeout=30,
+        )
+    except Exception as exc:  # noqa: BLE001 — network/transport
+        raise FetchError(f"Couldn't reach the transcript service: {exc}") from exc
+
+    status = getattr(resp, "status_code", 200)
+    if status == 202:
+        raise FetchError("The transcript is still being generated — try again shortly.")
+    if status == 404:
+        raise FetchError("No transcript found for this video.")
+    if status == 403:
+        raise FetchError("This video is restricted, so its transcript can't be fetched.")
+    if status >= 400:
+        raise FetchError(f"Transcript service error (HTTP {status}).")
+
+    content = resp.json().get("content")
+    if not isinstance(content, str) or not content.strip():
+        raise FetchError("The transcript service returned no transcript for this video.")
+    return content
+
+
+def _default_get(url: str, **kwargs):
+    import requests
+
+    return requests.get(url, **kwargs)
 
 
 def _default_title(video_id: str, url: str) -> str | None:

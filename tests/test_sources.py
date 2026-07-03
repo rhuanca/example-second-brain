@@ -10,17 +10,29 @@ class DispatchTest(unittest.TestCase):
         article = fetch(
             "https://youtu.be/dQw4w9WgXcQ",
             article_fetch=lambda url: calls.setdefault("article", url),
-            youtube_fetch=lambda url: Article("video", "transcript"),
+            youtube_fetch=lambda url, api_key=None: Article("video", "transcript"),
         )
         self.assertEqual(article.text, "transcript")
         self.assertNotIn("article", calls)  # article path not used
+
+    def test_youtube_receives_supadata_api_key(self):
+        seen = {}
+        fetch(
+            "https://youtu.be/dQw4w9WgXcQ",
+            supadata_api_key="KEY",
+            youtube_fetch=lambda url, api_key=None: (
+                seen.update(api_key=api_key),
+                Article("v", "t"),
+            )[1],
+        )
+        self.assertEqual(seen["api_key"], "KEY")
 
     def test_web_url_routes_to_article_fetch(self):
         calls = {}
         article = fetch(
             "https://example.com/post",
             article_fetch=lambda url: Article("post", "body"),
-            youtube_fetch=lambda url: calls.setdefault("youtube", url),
+            youtube_fetch=lambda url, api_key=None: calls.setdefault("youtube", url),
         )
         self.assertEqual(article.text, "body")
         self.assertNotIn("youtube", calls)  # youtube path not used

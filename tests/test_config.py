@@ -78,6 +78,11 @@ class SettingsTest(unittest.TestCase):
         s = Settings.from_env(_valid_env(MEDIUM_COOKIE="sid-abc"))
         self.assertEqual(s.medium_cookie, "sid-abc")
 
+    def test_supadata_api_key_optional_and_read(self):
+        self.assertIsNone(Settings.from_env(_valid_env()).supadata_api_key)
+        s = Settings.from_env(_valid_env(SUPADATA_API_KEY="sd-123"))
+        self.assertEqual(s.supadata_api_key, "sd-123")
+
     def test_vault_path_expanduser(self):
         s = Settings.from_env(_valid_env(VAULT_PATH="~/myvault"))
         self.assertTrue(s.vault_path.is_absolute())

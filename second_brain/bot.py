@@ -8,6 +8,7 @@ step, after fetch and summarize both succeed.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import datetime as _dt
 import functools
 from dataclasses import dataclass
@@ -114,6 +115,38 @@ def _with_source_tag(tags: list[str], source: str) -> list[str]:
 
 # --- Telegram wiring -------------------------------------------------------
 
+_TYPING_REFRESH_SECONDS = 4  # Telegram's typing indicator lasts ~5s; refresh it.
+
+
+async def _send_typing(message) -> None:
+    """Show the 'typing…' chat action. Best-effort — never fails the request."""
+    chat = getattr(message, "chat", None)
+    send = getattr(chat, "send_action", None)
+    if send is None:
+        return
+    try:
+        await send("typing")
+    except Exception:  # noqa: BLE001 — feedback is cosmetic
+        pass
+
+
+async def _run_with_typing(message, work):
+    """Await `work` while keeping the typing indicator alive; return its result."""
+    await _send_typing(message)
+    ticker = asyncio.create_task(_typing_loop(message))
+    try:
+        return await work
+    finally:
+        ticker.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await ticker
+
+
+async def _typing_loop(message) -> None:
+    while True:
+        await asyncio.sleep(_TYPING_REFRESH_SECONDS)
+        await _send_typing(message)
+
 
 def is_allowed(user_id: int | None, settings: Settings) -> bool:
     """True only for the single configured user id (the allow-list)."""
@@ -124,8 +157,12 @@ def build_application(settings: Settings, vault: Vault):
     """Build a python-telegram-bot Application wired to the capture pipeline."""
     from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
-    # Bind the Medium cookie into the fetch so the pipeline keeps its fetch(url) shape.
-    fetch = functools.partial(default_fetch, medium_cookie=settings.medium_cookie)
+    # Bind per-source credentials so the pipeline keeps its fetch(url) shape.
+    fetch = functools.partial(
+        default_fetch,
+        medium_cookie=settings.medium_cookie,
+        supadata_api_key=settings.supadata_api_key,
+    )
 
     app = Application.builder().token(settings.telegram_bot_token).build()
     app.add_handler(CommandHandler("ask", make_ask_handler(settings, vault)))
@@ -159,14 +196,17 @@ def make_handler(
         message = update.effective_message
         if message is None:
             return
-        result = await asyncio.to_thread(
-            handle_url,
-            message.text,
-            vault=vault,
-            settings=settings,
-            fetch=fetch,
-            summarize=summarize,
-            today=today,
+        result = await _run_with_typing(
+            message,
+            asyncio.to_thread(
+                handle_url,
+                message.text,
+                vault=vault,
+                settings=settings,
+                fetch=fetch,
+                summarize=summarize,
+                today=today,
+            ),
         )
         await message.reply_text(result.reply)
 
@@ -192,8 +232,9 @@ def make_ask_handler(settings: Settings, vault: Vault, *, run_ask=default_ask):
         if not question:
             await message.reply_text(ASK_USAGE)
             return
-        reply = await asyncio.to_thread(
-            run_ask, question, vault=vault, settings=settings
+        reply = await _run_with_typing(
+            message,
+            asyncio.to_thread(run_ask, question, vault=vault, settings=settings),
         )
         await message.reply_text(reply)
 

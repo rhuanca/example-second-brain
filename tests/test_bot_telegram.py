@@ -26,10 +26,19 @@ def _settings(vault_path):
     )
 
 
+class FakeChat:
+    def __init__(self):
+        self.actions = []
+
+    async def send_action(self, action):
+        self.actions.append(action)
+
+
 class FakeMessage:
     def __init__(self, text):
         self.text = text
         self.replies = []
+        self.chat = FakeChat()
 
     async def reply_text(self, text):
         self.replies.append(text)
@@ -63,11 +72,18 @@ class AllowListTest(unittest.TestCase):
         asyncio.run(handler(update, None))
         self.assertEqual(message.replies, [NO_URL_MESSAGE])
 
+    def test_handler_shows_typing_for_owner(self):
+        handler = make_handler(self.settings, self.vault)
+        update, message = _update(42, "no link here")
+        asyncio.run(handler(update, None))
+        self.assertIn("typing", message.chat.actions)
+
     def test_handler_ignores_other_users(self):
         handler = make_handler(self.settings, self.vault)
         update, message = _update(99, "no link here")
         asyncio.run(handler(update, None))
         self.assertEqual(message.replies, [])
+        self.assertEqual(message.chat.actions, [])  # no typing for strangers
 
     def test_handler_happy_path_replies_with_summary(self):
         from second_brain.fetcher import Article
@@ -113,6 +129,7 @@ class AskHandlerTest(unittest.TestCase):
         asyncio.run(handler(update, None))
         self.assertEqual(message.replies, ["here is your answer"])
         self.assertEqual(seen["q"], "what about agent memory?")
+        self.assertIn("typing", message.chat.actions)
 
     def test_empty_question_shows_usage(self):
         handler = make_ask_handler(
