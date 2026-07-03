@@ -3,11 +3,12 @@
 Send a link to your Telegram bot → it fetches the article (or a **YouTube
 video's transcript**), writes a **technical summary** with Claude, replies to you
 in the chat, and files a Markdown note into a dedicated **Obsidian** vault
-(organized PARA-style). Review and remix your reading later in Obsidian.
+(a flat, tag-organized reference library). Review and remix your reading later in
+Obsidian.
 
 ```
 Telegram message → extract URL → fetch article → summarize (Claude)
-                → save PARA note → reply with the summary
+                → save tagged note → reply with the summary
 ```
 
 Single-user by design (only your Telegram id is served). Runs locally; built
@@ -34,7 +35,7 @@ Fill in `.env`:
 | `TELEGRAM_ALLOWED_USER_ID` | Message [@userinfobot](https://t.me/userinfobot); it replies with your numeric id. Only this user is served. |
 | `ANTHROPIC_API_KEY` | From the [Anthropic Console](https://console.anthropic.com/) |
 | `ANTHROPIC_MODEL` | Claude model for summaries. Defaults to `claude-sonnet-4-6`. |
-| `VAULT_PATH` | Path to the Obsidian vault the bot owns (e.g. `./vault`). PARA folders are created here on startup. |
+| `VAULT_PATH` | Path to the Obsidian vault the bot owns (e.g. `./vault`). Notes are written flat here on startup. |
 | `MEDIUM_COOKIE` | *(optional)* Your Medium `sid` cookie, so member-only articles you pay for are summarized in full. Empty = free/teaser content only. See "Medium" below. |
 
 ## Run
@@ -45,7 +46,7 @@ uv run python -m second_brain.main
 
 Then, from the Telegram account whose id you configured, send the bot a link.
 You'll get a summary reply, and a note will appear under
-`<VAULT_PATH>/Resources/` (open the vault in Obsidian to browse).
+`<VAULT_PATH>/` (open the vault in Obsidian to browse).
 
 - Re-sending the same link → "already in your second brain", no duplicate note.
 - Sending a non-link message → a short usage hint, no note.
@@ -66,19 +67,19 @@ Medium. The session expires periodically — when member-only notes start coming
 back as teasers, paste a fresh cookie. Only `medium.com` / `*.medium.com` URLs are
 recognized; Medium publications on custom domains fall back to the normal fetch.
 
-## Notes & PARA
+## Notes & tags
 
-Notes are Markdown with YAML frontmatter and land in a PARA folder
-(`Projects/`, `Areas/`, `Resources/`, `Archives/`) — reference reading defaults
-to **Resources**. Example:
+Notes are Markdown with YAML frontmatter, written **flat** at the vault root and
+organized by **tags** — 2–5 topic tags from the summary plus a `source` tag
+(`article` / `youtube` / `medium`), so you can filter by topic or where it came
+from. Example:
 
 ```markdown
 ---
 title: "Building Agentic Systems"
 source: "https://example.com/post"
 date: 2026-06-30
-para: resources
-tags: [agentic-dev, llm]
+tags: [agentic-dev, llm, article]
 ---
 ## TL;DR
 ...
@@ -114,7 +115,7 @@ flowchart TD
     sources --> medium["medium.py — cookie fetch"]
     sources --> fetcher["fetcher.py — trafilatura"]
     summarizer --> claude["Claude API"]
-    vault --> obsidian["Obsidian vault — PARA markdown"]
+    vault --> obsidian["Obsidian vault — tagged markdown"]
     youtube --> yt["YouTube"]
     medium --> md["Medium"]
     fetcher --> web["Web"]
@@ -140,7 +141,7 @@ flowchart TD
     yt --> sum["summarize — Claude → Summary"]
     md --> sum
     art --> sum
-    sum --> write["write_note — PARA + frontmatter"]
+    sum --> write["write_note — flat + tags"]
     write --> done["Reply + note saved"]
 
     classDef focal fill:#fdecc8,stroke:#e0a93f,color:#7a4b00;
@@ -169,7 +170,7 @@ flowchart TD
 - `second_brain/medium.py` — Medium detection + cookie-authenticated fetch
 - `second_brain/sources.py` — routes a URL to the article / YouTube / Medium fetcher
 - `second_brain/summarizer.py` — Claude summary → structured `Summary`
-- `second_brain/vault.py` — PARA routing, note rendering, write + dedup
+- `second_brain/vault.py` — note rendering, flat write + dedup
 - `second_brain/bot.py` — capture pipeline + Telegram wiring
 - `second_brain/main.py` — entry point (long-polling)
 - `specs/` — the spec, plan, and task breakdown (spec-driven development)

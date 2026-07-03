@@ -3,12 +3,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from second_brain.models import Para, Summary
-from second_brain.vault import (
-    PARA_FOLDERS,
-    DuplicateNoteError,
-    Vault,
-)
+from second_brain.models import Summary
+from second_brain.vault import DuplicateNoteError, Vault
 
 DATE = datetime.date(2026, 6, 30)
 
@@ -20,7 +16,6 @@ def _summary(**overrides):
         key_points=["a"],
         tags=["agentic-dev"],
         prototype_ideas=["idea"],
-        para=Para.RESOURCES,
     )
     data.update(overrides)
     return Summary(**data)
@@ -34,25 +29,24 @@ class VaultWriteTest(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    def test_ensure_folders_creates_para_dirs(self):
+    def test_ensure_folders_creates_vault_root(self):
         self.vault.ensure_folders()
-        for folder in PARA_FOLDERS.values():
-            self.assertTrue((self.vault.root / folder).is_dir())
+        self.assertTrue(self.vault.root.is_dir())
 
-    def test_write_note_lands_in_correct_para_folder(self):
+    def test_write_note_lands_flat_at_vault_root(self):
         path = self.vault.write_note(
-            _summary(para=Para.RESOURCES), "https://example.com/post", DATE
+            _summary(), "https://example.com/post", DATE
         )
         self.assertTrue(path.exists())
-        self.assertEqual(path.parent.name, "Resources")
+        self.assertEqual(path.parent, self.vault.root)
         self.assertEqual(path.name, "2026-06-30-building-agentic-systems.md")
 
-    def test_write_creates_missing_folder(self):
-        # No ensure_folders() call first: write_note must create it.
-        path = self.vault.write_note(
-            _summary(para=Para.PROJECTS), "https://example.com/x", DATE
-        )
-        self.assertEqual(path.parent.name, "Projects")
+    def test_write_creates_missing_vault_root(self):
+        # Point at a not-yet-created dir: write_note must create it.
+        missing = Vault(Path(self._tmp.name) / "sub")
+        path = missing.write_note(_summary(), "https://example.com/x", DATE)
+        self.assertTrue(path.exists())
+        self.assertEqual(path.parent, missing.root)
 
     def test_is_duplicate_detects_written_note(self):
         url = "https://example.com/post"

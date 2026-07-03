@@ -65,13 +65,12 @@ class AllowListTest(unittest.TestCase):
 
     def test_handler_happy_path_replies_with_summary(self):
         from second_brain.fetcher import Article
-        from second_brain.models import Para, Summary
+        from second_brain.models import Summary
 
         summary = Summary(
             title="Agentic Patterns",
             tldr="How to build agent loops.",
             tags=["agentic-dev"],
-            para=Para.RESOURCES,
         )
         handler = make_handler(
             self.settings,

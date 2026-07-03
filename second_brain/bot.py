@@ -19,7 +19,7 @@ from second_brain.sources import fetch as default_fetch
 from second_brain.summarizer import SummarizerError
 from second_brain.summarizer import summarize as default_summarize
 from second_brain.urls import extract_url
-from second_brain.vault import DuplicateNoteError, Vault, folder_for
+from second_brain.vault import DuplicateNoteError, Vault
 
 NO_URL_MESSAGE = (
     "Send me a link (http/https) and I'll summarize it and file it in your "
@@ -73,6 +73,8 @@ def handle_url(
     except SummarizerError as exc:
         return PipelineResult(f"⚠️ Couldn't summarize that article: {exc}")
 
+    summary.tags = _with_source_tag(summary.tags, article.source)
+
     try:
         path = vault.write_note(summary, url, today())
     except DuplicateNoteError as exc:
@@ -99,8 +101,14 @@ def _render_reply(summary, path: Path) -> str:
     if summary.tags:
         lines += ["", "Tags: " + " ".join(f"#{t}" for t in summary.tags)]
 
-    lines += ["", f"Saved to {folder_for(summary.para)}/{path.name}"]
+    lines += ["", f"Saved: {path.name}"]
     return "\n".join(lines)
+
+
+def _with_source_tag(tags: list[str], source: str) -> list[str]:
+    """Append the source (article/youtube/medium) as a tag, without duplicating."""
+    source = source.strip().lower()
+    return tags if source in tags else [*tags, source]
 
 
 # --- Telegram wiring -------------------------------------------------------

@@ -1,7 +1,7 @@
-"""Obsidian vault: PARA routing, note filenames, and Markdown rendering.
+"""Obsidian vault: note filenames, Markdown rendering, and flat write + dedup.
 
-This module is the interface to the vault on disk. Task 4 covers the pure pieces
-(routing, slug, render); writing and dedup are added in task 5.
+Notes live flat at the vault root, organized by tags (topic tags from the
+summary plus a source tag). This module is the interface to the vault on disk.
 """
 
 from __future__ import annotations
@@ -13,24 +13,11 @@ from pathlib import Path
 
 import frontmatter
 
-from second_brain.models import Para, Summary
+from second_brain.models import Summary
 from second_brain.urls import normalize_url
-
-# PARA category -> folder name inside the vault.
-PARA_FOLDERS: dict[Para, str] = {
-    Para.PROJECTS: "Projects",
-    Para.AREAS: "Areas",
-    Para.RESOURCES: "Resources",
-    Para.ARCHIVES: "Archives",
-}
 
 _SLUG_MAX_LEN = 60
 _slug_strip_re = re.compile(r"[^a-z0-9]+")
-
-
-def folder_for(para: Para) -> str:
-    """Return the vault folder name for a PARA category."""
-    return PARA_FOLDERS[para]
 
 
 def slugify(title: str) -> str:
@@ -63,7 +50,6 @@ def render_note(summary: Summary, source_url: str, date: _dt.date) -> str:
         title=summary.title,
         source=source_url,
         date=date.isoformat(),
-        para=summary.para.value,
         tags=list(summary.tags),
     )
     return frontmatter.dumps(post)
@@ -79,20 +65,18 @@ class DuplicateNoteError(Exception):
 
 
 class Vault:
-    """A dedicated Obsidian vault rooted at a directory on disk."""
+    """A dedicated Obsidian vault rooted at a directory on disk (flat layout)."""
 
     def __init__(self, root: Path):
         self.root = Path(root)
 
     def ensure_folders(self) -> None:
-        """Create the vault root and all PARA folders if they don't exist."""
-        for folder in PARA_FOLDERS.values():
-            (self.root / folder).mkdir(parents=True, exist_ok=True)
+        """Create the vault root directory if it doesn't exist."""
+        self.root.mkdir(parents=True, exist_ok=True)
 
     def iter_notes(self) -> Iterator[Path]:
-        """Yield every Markdown note path across the PARA folders."""
-        for folder in PARA_FOLDERS.values():
-            yield from (self.root / folder).glob("*.md")
+        """Yield every Markdown note at the vault root."""
+        yield from self.root.glob("*.md")
 
     def find_by_url(self, url: str) -> Path | None:
         """Return the note whose `source` matches `url` (normalized), else None."""
@@ -109,7 +93,7 @@ class Vault:
     def write_note(
         self, summary: Summary, source_url: str, date: _dt.date
     ) -> Path:
-        """Render and write a note; refuse if the URL is already saved.
+        """Render and write a note flat at the vault root; refuse duplicates.
 
         Returns the path of the written note. Raises DuplicateNoteError if a note
         for the same source URL already exists.
@@ -118,9 +102,8 @@ class Vault:
         if existing is not None:
             raise DuplicateNoteError(source_url, existing)
 
-        folder = self.root / folder_for(summary.para)
-        folder.mkdir(parents=True, exist_ok=True)
-        path = _unique_path(folder, note_filename(summary.title, date))
+        self.root.mkdir(parents=True, exist_ok=True)
+        path = _unique_path(self.root, note_filename(summary.title, date))
         path.write_text(render_note(summary, source_url, date), encoding="utf-8")
         return path
 

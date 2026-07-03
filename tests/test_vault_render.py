@@ -3,8 +3,8 @@ import unittest
 
 import frontmatter
 
-from second_brain.models import Para, Summary
-from second_brain.vault import folder_for, note_filename, render_note, slugify
+from second_brain.models import Summary
+from second_brain.vault import note_filename, render_note, slugify
 
 DATE = datetime.date(2026, 6, 30)
 
@@ -16,21 +16,9 @@ def _summary(**overrides):
         key_points=["Tool use matters", "Keep context tight"],
         tags=["agentic-dev", "llm"],
         prototype_ideas=["A tiny planner loop"],
-        para=Para.RESOURCES,
     )
     data.update(overrides)
     return Summary(**data)
-
-
-class RoutingTest(unittest.TestCase):
-    def test_folder_for_each_category(self):
-        self.assertEqual(folder_for(Para.PROJECTS), "Projects")
-        self.assertEqual(folder_for(Para.AREAS), "Areas")
-        self.assertEqual(folder_for(Para.RESOURCES), "Resources")
-        self.assertEqual(folder_for(Para.ARCHIVES), "Archives")
-
-    def test_default_para_is_resources(self):
-        self.assertEqual(_summary(para=Para.from_str("bogus")).para, Para.RESOURCES)
 
 
 class SlugTest(unittest.TestCase):
@@ -59,7 +47,7 @@ class RenderTest(unittest.TestCase):
         self.assertEqual(post["title"], "Building Agentic Systems")
         self.assertEqual(post["source"], "https://example.com/post")
         self.assertEqual(post["date"], "2026-06-30")
-        self.assertEqual(post["para"], "resources")
+        self.assertNotIn("para", post.keys())
         self.assertEqual(post["tags"], ["agentic-dev", "llm"])
 
     def test_body_contains_sections(self):

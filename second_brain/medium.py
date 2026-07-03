@@ -35,7 +35,9 @@ def fetch_medium(url: str, cookie: str, *, article_fetch=_article_fetch, get=Non
     A bad/expired cookie simply yields the public teaser HTML (Medium returns it
     for logged-out requests), so the note degrades gracefully rather than erroring.
     """
-    return article_fetch(url, downloader=_cookie_downloader(cookie, get=get))
+    article = article_fetch(url, downloader=_cookie_downloader(cookie, get=get))
+    article.source = "medium"
+    return article
 
 
 def _cookie_downloader(cookie: str, get=None):

@@ -2,7 +2,6 @@ import json
 import unittest
 from types import SimpleNamespace
 
-from second_brain.models import Para
 from second_brain.summarizer import SummarizerError, summarize
 
 
@@ -31,7 +30,6 @@ def _valid_json(**overrides):
         "tldr": "How to build agent loops.",
         "key_points": ["Use tools", "Keep context tight"],
         "tags": ["Agentic Dev", "LLM Agents"],
-        "para_category": "resources",
         "prototype_ideas": ["A planner loop"],
     }
     data.update(overrides)
@@ -45,7 +43,6 @@ class SummarizeTest(unittest.TestCase):
         self.assertEqual(s.title, "Agentic Patterns")
         self.assertEqual(s.tldr, "How to build agent loops.")
         self.assertEqual(s.key_points, ["Use tools", "Keep context tight"])
-        self.assertEqual(s.para, Para.RESOURCES)
         self.assertEqual(s.prototype_ideas, ["A planner loop"])
 
     def test_tags_normalized_to_lowercase_kebab(self):
@@ -85,17 +82,11 @@ class SummarizeTest(unittest.TestCase):
         s = summarize("t", "body", model="m", client=client)
         self.assertEqual(s.title, "Agentic Patterns")
 
-    def test_unknown_para_defaults_to_resources(self):
-        client = FakeClient(_valid_json(para_category="nonsense"))
-        s = summarize("t", "body", model="m", client=client)
-        self.assertEqual(s.para, Para.RESOURCES)
-
     def test_malformed_json_falls_back_to_raw_text(self):
         client = FakeClient("Sorry, here is a plain text summary of the article.")
         s = summarize("My Title", "body", model="m", client=client)
         self.assertEqual(s.title, "My Title")
         self.assertIn("plain text summary", s.tldr)
-        self.assertEqual(s.para, Para.RESOURCES)
         self.assertEqual(s.key_points, [])
 
     def test_missing_api_key_without_client_raises(self):

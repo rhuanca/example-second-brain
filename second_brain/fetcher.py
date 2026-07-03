@@ -13,6 +13,7 @@ class FetchError(Exception):
 class Article:
     title: str
     text: str
+    source: str = "article"
 
 
 def fetch(url: str, *, downloader=None, extractor=None) -> Article:

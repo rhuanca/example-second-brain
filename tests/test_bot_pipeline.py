@@ -5,7 +5,7 @@ from pathlib import Path
 
 from second_brain.config import Settings
 from second_brain.fetcher import Article, FetchError
-from second_brain.models import Para, Summary
+from second_brain.models import Summary
 from second_brain.summarizer import SummarizerError
 from second_brain.bot import NO_URL_MESSAGE, handle_url
 from second_brain.vault import Vault
@@ -31,7 +31,6 @@ def _summary():
         key_points=["Use tools"],
         tags=["agentic-dev"],
         prototype_ideas=["A planner loop"],
-        para=Para.RESOURCES,
     )
 
 
@@ -57,9 +56,23 @@ class HandleUrlTest(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertIsNotNone(result.note_path)
         self.assertTrue(result.note_path.exists())
-        self.assertEqual(result.note_path.parent.name, "Resources")
+        self.assertEqual(result.note_path.parent, self.vault.root)
         self.assertIn("Agentic Patterns", result.reply)
         self.assertIn("#agentic-dev", result.reply)
+        self.assertIn("#article", result.reply)  # source tag auto-added
+
+    def test_source_tag_reflects_the_fetcher(self):
+        result = self._run(
+            "https://youtu.be/dQw4w9WgXcQ",
+            fetch=lambda url: Article("A Talk", "transcript", source="youtube"),
+            summarize=lambda *a, **k: _summary(),
+        )
+        self.assertIn("#youtube", result.reply)
+        import frontmatter
+
+        post = frontmatter.load(str(result.note_path))
+        self.assertIn("youtube", post["tags"])
+        self.assertIn("agentic-dev", post["tags"])
 
     def test_no_url_returns_hint_and_writes_nothing(self):
         result = self._run("just a note, no link")

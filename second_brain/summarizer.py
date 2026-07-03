@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import re
 
-from second_brain.models import Para, Summary
+from second_brain.models import Summary
 
 _SYSTEM = (
     "You are a technical analyst who writes concise, information-dense summaries "
@@ -27,8 +27,6 @@ Return ONLY a JSON object (no markdown fences, no prose) with these keys:
 - "tldr": a 2-4 sentence technical summary (string)
 - "key_points": 3-6 concrete technical takeaways (array of strings)
 - "tags": 2-5 topic tags, lowercase, single words or short phrases (array of strings)
-- "para_category": one of "projects", "areas", "resources", "archives" \
-(default "resources" for reference reading)
 - "prototype_ideas": 1-3 ideas for prototypes this article could inspire \
 (array of strings; empty array if none)
 
@@ -105,7 +103,6 @@ def _parse_summary(raw: str, fallback_title: str) -> Summary:
         return Summary(
             title=fallback_title or "Untitled",
             tldr=raw or "(no summary produced)",
-            para=Para.RESOURCES,
         )
 
     return Summary(
@@ -114,7 +111,6 @@ def _parse_summary(raw: str, fallback_title: str) -> Summary:
         key_points=_str_list(payload.get("key_points")),
         tags=[_kebab(t) for t in _str_list(payload.get("tags"))],
         prototype_ideas=_str_list(payload.get("prototype_ideas")),
-        para=Para.from_str(payload.get("para_category")),
     )
 
 
