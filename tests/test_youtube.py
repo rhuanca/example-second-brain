@@ -70,6 +70,17 @@ class FetchTranscriptTest(unittest.TestCase):
         with self.assertRaises(FetchError):
             fetch_transcript(f"https://youtu.be/{VID}", get_transcript=boom)
 
+    def test_ip_block_gets_distinct_message(self):
+        class IpBlocked(Exception):  # mirrors youtube_transcript_api's class name
+            pass
+
+        def boom(vid):
+            raise IpBlocked()
+
+        with self.assertRaises(FetchError) as ctx:
+            fetch_transcript(f"https://youtu.be/{VID}", get_transcript=boom)
+        self.assertIn("IP", str(ctx.exception))
+
     def test_empty_transcript_raises(self):
         with self.assertRaises(FetchError):
             fetch_transcript(

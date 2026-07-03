@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as _dt
+import functools
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -114,9 +115,15 @@ def build_application(settings: Settings, vault: Vault):
     """Build a python-telegram-bot Application wired to the capture pipeline."""
     from telegram.ext import Application, MessageHandler, filters
 
+    # Bind the Medium cookie into the fetch so the pipeline keeps its fetch(url) shape.
+    fetch = functools.partial(default_fetch, medium_cookie=settings.medium_cookie)
+
     app = Application.builder().token(settings.telegram_bot_token).build()
     app.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, make_handler(settings, vault))
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            make_handler(settings, vault, fetch=fetch),
+        )
     )
     return app
 

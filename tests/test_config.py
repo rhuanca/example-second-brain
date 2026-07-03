@@ -70,6 +70,14 @@ class SettingsTest(unittest.TestCase):
         s = Settings.from_env(_valid_env(ANTHROPIC_MODEL="   "))
         self.assertEqual(s.anthropic_model, DEFAULT_MODEL)
 
+    def test_medium_cookie_optional_defaults_none(self):
+        env = _valid_env()
+        self.assertIsNone(Settings.from_env(env).medium_cookie)
+
+    def test_medium_cookie_read_from_env(self):
+        s = Settings.from_env(_valid_env(MEDIUM_COOKIE="sid-abc"))
+        self.assertEqual(s.medium_cookie, "sid-abc")
+
     def test_vault_path_expanduser(self):
         s = Settings.from_env(_valid_env(VAULT_PATH="~/myvault"))
         self.assertTrue(s.vault_path.is_absolute())

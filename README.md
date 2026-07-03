@@ -35,6 +35,7 @@ Fill in `.env`:
 | `ANTHROPIC_API_KEY` | From the [Anthropic Console](https://console.anthropic.com/) |
 | `ANTHROPIC_MODEL` | Claude model for summaries. Defaults to `claude-sonnet-4-6`. |
 | `VAULT_PATH` | Path to the Obsidian vault the bot owns (e.g. `./vault`). PARA folders are created here on startup. |
+| `MEDIUM_COOKIE` | *(optional)* Your Medium `sid` cookie, so member-only articles you pay for are summarized in full. Empty = free/teaser content only. See "Medium" below. |
 
 ## Run
 
@@ -51,6 +52,19 @@ You'll get a summary reply, and a note will appear under
 - **YouTube links** are summarized from the video's transcript. If a video has no
   usable transcript (captions disabled/unavailable), the bot says so and saves
   nothing.
+- **Medium links** work out of the box for free posts. For **member-only**
+  articles, set `MEDIUM_COOKIE` (see below) so the bot fetches the full text you
+  pay for; without it, member-only links only yield the public teaser.
+
+### Medium member-only articles
+
+Set `MEDIUM_COOKIE` to the value of your `sid` cookie on `medium.com`
+(browser DevTools → Application → Cookies → `medium.com` → `sid`). The bot then
+downloads member-only articles as the logged-in you and summarizes the full text.
+Treat it like a password: it's read from `.env` (gitignored) and only sent to
+Medium. The session expires periodically — when member-only notes start coming
+back as teasers, paste a fresh cookie. Only `medium.com` / `*.medium.com` URLs are
+recognized; Medium publications on custom domains fall back to the normal fetch.
 
 ## Notes & PARA
 
@@ -97,7 +111,8 @@ and Telegram are mocked. Only the live run above needs real credentials.
 - `second_brain/urls.py` — extract + normalize URLs (dedup key)
 - `second_brain/fetcher.py` — article extraction (trafilatura)
 - `second_brain/youtube.py` — YouTube detection + transcript fetch
-- `second_brain/sources.py` — routes a URL to the article or YouTube fetcher
+- `second_brain/medium.py` — Medium detection + cookie-authenticated fetch
+- `second_brain/sources.py` — routes a URL to the article / YouTube / Medium fetcher
 - `second_brain/summarizer.py` — Claude summary → structured `Summary`
 - `second_brain/vault.py` — PARA routing, note rendering, write + dedup
 - `second_brain/bot.py` — capture pipeline + Telegram wiring

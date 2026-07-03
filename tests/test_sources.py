@@ -25,6 +25,31 @@ class DispatchTest(unittest.TestCase):
         self.assertEqual(article.text, "body")
         self.assertNotIn("youtube", calls)  # youtube path not used
 
+    def test_medium_with_cookie_routes_to_medium_fetch(self):
+        seen = {}
+        article = fetch(
+            "https://medium.com/@u/slug-123",
+            medium_cookie="SID",
+            article_fetch=lambda url: Article("teaser", "teaser body"),
+            medium_fetch=lambda url, cookie: (
+                seen.update(call=(url, cookie)),
+                Article("full", "full body"),
+            )[1],
+        )
+        self.assertEqual(article.text, "full body")
+        self.assertEqual(seen["call"], ("https://medium.com/@u/slug-123", "SID"))
+
+    def test_medium_without_cookie_falls_back_to_article_fetch(self):
+        calls = {}
+        article = fetch(
+            "https://medium.com/@u/slug-123",
+            medium_cookie=None,
+            article_fetch=lambda url: Article("teaser", "teaser body"),
+            medium_fetch=lambda url, cookie: calls.setdefault("medium", url),
+        )
+        self.assertEqual(article.text, "teaser body")
+        self.assertNotIn("medium", calls)  # cookie missing → no cookie fetch
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -60,9 +60,7 @@ def fetch_transcript(url: str, *, get_transcript=None, get_title=None) -> Articl
     except FetchError:
         raise
     except Exception as exc:  # noqa: BLE001 — normalize any library error
-        raise FetchError(
-            "No transcript available for this video (captions may be disabled)."
-        ) from exc
+        raise FetchError(_transcript_error_message(exc)) from exc
 
     text = (text or "").strip()
     if not text:
@@ -74,6 +72,23 @@ def fetch_transcript(url: str, *, get_transcript=None, get_title=None) -> Articl
         title = None
 
     return Article(title=title or f"YouTube video {vid}", text=text)
+
+
+def _transcript_error_message(exc: Exception) -> str:
+    """Turn a youtube-transcript-api error into a message that aids diagnosis.
+
+    Classify by the exception's class name so we don't have to import the library
+    here (it's only imported inside `_default_transcript`).
+    """
+    name = type(exc).__name__
+    if name in {"IpBlocked", "RequestBlocked"}:
+        return (
+            "YouTube is blocking transcript requests from this host's IP (common on "
+            "cloud/VPS hosts). Run the bot from a residential IP or use a proxy."
+        )
+    if name in {"AgeRestricted", "VideoUnavailable", "InvalidVideoId", "PoTokenRequired"}:
+        return "This video is unavailable or restricted, so its transcript can't be fetched."
+    return "No transcript available for this video (captions may be disabled)."
 
 
 def _default_transcript(video_id: str) -> str:
