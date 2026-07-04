@@ -80,14 +80,21 @@ recognized; Medium publications on custom domains fall back to the normal fetch.
 Notes are Markdown with YAML frontmatter, written **flat** at the vault root and
 organized by **tags** — 2–5 topic tags from the summary plus a `source` tag
 (`article` / `youtube` / `medium`), so you can filter by topic or where it came
-from. Example:
+from.
+
+For **YouTube and Medium** captures (whose raw text is costly/unreliable to
+re-fetch), the full transcript / article text is also preserved as a companion
+file `transcripts/<note>.transcript.md`, linked both ways from the note. The
+`.transcript.md` marker makes transcripts findable by extension regardless of
+folder, so you can reorganize them later in bulk. Example note:
 
 ```markdown
 ---
 title: "Building Agentic Systems"
 source: "https://example.com/post"
 date: 2026-06-30
-tags: [agentic-dev, llm, article]
+tags: [agentic-dev, llm, youtube]
+transcript: "[[transcripts/2026-06-30-building-agentic-systems.transcript]]"
 ---
 ## TL;DR
 ...
