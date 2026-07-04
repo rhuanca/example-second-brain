@@ -32,6 +32,9 @@ class Settings:
     anthropic_api_key: str | None = None
     medium_cookie: str | None = None
     supadata_api_key: str | None = None
+    slack_bot_token: str | None = None
+    slack_app_token: str | None = None
+    slack_allowed_user_id: str | None = None
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "Settings":
@@ -76,6 +79,9 @@ class Settings:
             anthropic_api_key=api_key,
             medium_cookie=medium_cookie,
             supadata_api_key=supadata_api_key,
+            slack_bot_token=env.get("SLACK_BOT_TOKEN", "").strip() or None,
+            slack_app_token=env.get("SLACK_APP_TOKEN", "").strip() or None,
+            slack_allowed_user_id=env.get("SLACK_ALLOWED_USER_ID", "").strip() or None,
         )
 
 

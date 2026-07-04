@@ -83,6 +83,22 @@ class SettingsTest(unittest.TestCase):
         s = Settings.from_env(_valid_env(SUPADATA_API_KEY="sd-123"))
         self.assertEqual(s.supadata_api_key, "sd-123")
 
+    def test_slack_fields_optional_and_read(self):
+        s0 = Settings.from_env(_valid_env())
+        self.assertIsNone(s0.slack_bot_token)
+        self.assertIsNone(s0.slack_app_token)
+        self.assertIsNone(s0.slack_allowed_user_id)
+        s = Settings.from_env(
+            _valid_env(
+                SLACK_BOT_TOKEN="xoxb-1",
+                SLACK_APP_TOKEN="xapp-1",
+                SLACK_ALLOWED_USER_ID="U123",
+            )
+        )
+        self.assertEqual(s.slack_bot_token, "xoxb-1")
+        self.assertEqual(s.slack_app_token, "xapp-1")
+        self.assertEqual(s.slack_allowed_user_id, "U123")
+
     def test_vault_path_expanduser(self):
         s = Settings.from_env(_valid_env(VAULT_PATH="~/myvault"))
         self.assertTrue(s.vault_path.is_absolute())

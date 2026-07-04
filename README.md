@@ -127,6 +127,32 @@ nothing matches, it says so rather than guessing. Retrieval is intentionally sim
 (lexical) for now and lives behind one `ask()` entry point, so it can be upgraded to
 semantic search later without touching the command.
 
+## Slack (optional) — ask at your desk
+
+Two channels for two modes: **Telegram for capture** (throw links at it on the go)
+and **Slack for querying** what you've saved (at your computer). The Slack bot
+answers questions from your notes with the same `ask` brain — DM it a question and
+it replies. Paste a *link* in Slack and it nudges you to use Telegram (capture's
+home). Both channels share one vault, so anything you saved on the go is queryable
+at your desk.
+
+**Set up the Slack app** (one-time; a personal workspace is fine):
+
+1. Create an app at [api.slack.com/apps](https://api.slack.com/apps) → *From scratch*, pick your workspace.
+2. **Socket Mode** → enable → creates an **App-Level Token** (`xapp-…`, scope `connections:write`) → `SLACK_APP_TOKEN`.
+3. **OAuth & Permissions** → Bot Token Scopes: `chat:write`, `reactions:write`, `im:history`. Install to workspace → **Bot User OAuth Token** (`xoxb-…`) → `SLACK_BOT_TOKEN`.
+4. **Event Subscriptions** → enable, subscribe to bot event **`message.im`** (no request URL needed with Socket Mode).
+5. Your Slack **member ID** (profile → *Copy member ID*, `U…`) → `SLACK_ALLOWED_USER_ID`.
+
+**Run it** (its own process, alongside the Telegram bot):
+
+```bash
+uv run python -m second_brain.slack_main
+```
+
+Then DM the bot (under *Apps* in Slack) a question like *"what have I saved about
+agent memory?"*.
+
 ## Architecture
 
 Every fetcher returns the same `Article`, so the pipeline is source-agnostic —
@@ -207,5 +233,7 @@ flowchart TD
 - `second_brain/vault.py` — note rendering, flat write + dedup
 - `second_brain/ask.py` — retrieval + Claude answer for `/ask`
 - `second_brain/bot.py` — capture pipeline + Telegram wiring
-- `second_brain/main.py` — entry point (long-polling)
+- `second_brain/slack_bot.py` — Slack adapter (desk-side `ask`)
+- `second_brain/main.py` — Telegram entry point (long-polling)
+- `second_brain/slack_main.py` — Slack entry point (Socket Mode)
 - `specs/` — the spec, plan, and task breakdown (spec-driven development)
