@@ -1,24 +1,30 @@
 #!/usr/bin/env bash
 #
-# Deploy the Second Brain bot as a systemd user service on Linux (Raspberry Pi OS, etc).
+# Deploy the Second Brain *Slack* bot as a systemd user service on Linux.
 # Idempotent — safe to re-run after pulling code changes.
+#
+# This is the query/ask side (capture runs on Telegram via deploy-telegram.sh). It's a
+# second service in the same project, sharing the one .env and vault:
+#   rr-second-brain-telegram  -> Telegram (capture)   [deploy-telegram.sh]
+#   rr-second-brain-slack     -> Slack (ask)          [this script]
 #
 # What it does:
 #   1. Verifies prerequisites (systemd, uv, .env)
 #   2. Runs `uv sync`
 #   3. Optionally writes a journald drop-in to cap log size at 50M (sudo)
-#   4. Writes ~/.config/systemd/user/rr-second-brain.service
+#   4. Writes ~/.config/systemd/user/rr-second-brain-slack.service
 #   5. Enables user lingering so the service starts at boot (sudo)
 #   6. Enables and (re)starts the service, then prints status
 #
 # What it does NOT do:
-#   - Read or modify your .env (you manage secrets yourself)
+#   - Read or modify your .env (needs SLACK_BOT_TOKEN / SLACK_APP_TOKEN /
+#     SLACK_ALLOWED_USER_ID; the bot validates them at startup)
 #   - Pull code from git (run `git pull` separately)
 
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SERVICE_NAME="rr-second-brain"
+SERVICE_NAME="rr-second-brain-slack"
 UNIT_FILE="$HOME/.config/systemd/user/${SERVICE_NAME}.service"
 JOURNALD_DROPIN="/etc/systemd/journald.conf.d/${SERVICE_NAME}.conf"
 
@@ -68,14 +74,14 @@ step "Writing $UNIT_FILE"
 mkdir -p "$(dirname "$UNIT_FILE")"
 cat > "$UNIT_FILE" <<EOF
 [Unit]
-Description=Second Brain Telegram service
+Description=Second Brain Slack service
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 WorkingDirectory=$PROJECT_DIR
-ExecStart=$UV_PATH run python -m second_brain.main
+ExecStart=$UV_PATH run python -m second_brain.slack_main
 Restart=on-failure
 RestartSec=10s
 
