@@ -37,6 +37,8 @@ Fill in `.env`:
 | `ANTHROPIC_MODEL` | Claude model for summaries. Defaults to `claude-sonnet-4-6`. |
 | `VAULT_PATH` | Path to the Obsidian vault the bot owns (e.g. `./vault`). Notes are written flat here on startup. |
 | `MEDIUM_COOKIE` | *(optional)* Your Medium `sid` cookie, so member-only articles you pay for are summarized in full. Empty = free/teaser content only. See "Medium" below. |
+| `JINA_API_KEY` | *(optional)* [Jina Reader](https://jina.ai/reader) key. When set, web articles are fetched as Markdown **with image captions** (diagrams get summarized too). Empty → local trafilatura, text only. |
+| `JINA_ENABLED` | `true`/`false` (default `true`). Set `false` to always use trafilatura and never call Jina. |
 
 ## Run
 
@@ -55,6 +57,9 @@ You'll get a summary reply, and a note will appear under
   searches your saved notes and answers with Claude, citing the notes it used
   (see "Ask your second brain" below).
 - Sending a non-link message → a short usage hint, no note.
+- **Web articles**: with `JINA_API_KEY` set, pages are fetched via Jina Reader as
+  Markdown **with vision-model image captions**, so diagrams/screenshots are
+  summarized too. Without a key it falls back to local trafilatura (text only).
 - **YouTube links** are summarized from the video's transcript. By default it uses
   the local `youtube-transcript-api`; set `SUPADATA_API_KEY` to fetch via
   [Supadata](https://supadata.ai) instead, whose servers avoid the YouTube IP block

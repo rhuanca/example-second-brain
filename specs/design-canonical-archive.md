@@ -45,7 +45,7 @@ Every source type is just a **"→ Markdown" adapter**; everything downstream
 
 | Source | Adapter | Notes |
 |---|---|---|
-| Web link | **Jina Reader** (`r.jina.ai`, `x-with-generated-alt`) | VLM image captions inline; free tier. Fallback: current trafilatura (no captions). |
+| Web link | **Jina Reader** (`r.jina.ai`, `x-with-generated-alt`) | VLM image captions inline. Captions **require `JINA_API_KEY`** (keyless returns 401 for the alt feature) → use Jina only when a key is set; else trafilatura (no captions). |
 | Medium (member) | cookie fetch → (Jina or trafilatura) | Reuse the `sid` cookie; then convert. |
 | YouTube | **Supadata** (or youtube-transcript-api) | Transcript is the archive body. |
 | PDF (Telegram upload) | **markitdown** | PDF → Markdown, local/free. Scanned PDFs need OCR (later). |

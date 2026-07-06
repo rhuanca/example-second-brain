@@ -165,11 +165,13 @@ def build_application(settings: Settings, vault: Vault):
     """Build a python-telegram-bot Application wired to the capture pipeline."""
     from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
-    # Bind per-source credentials so the pipeline keeps its fetch(url) shape.
+    # Bind per-source credentials/toggles so the pipeline keeps its fetch(url) shape.
     fetch = functools.partial(
         default_fetch,
         medium_cookie=settings.medium_cookie,
         supadata_api_key=settings.supadata_api_key,
+        jina_enabled=settings.jina_enabled,
+        jina_api_key=settings.jina_api_key,
     )
 
     app = Application.builder().token(settings.telegram_bot_token).build()

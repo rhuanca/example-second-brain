@@ -83,6 +83,17 @@ class SettingsTest(unittest.TestCase):
         s = Settings.from_env(_valid_env(SUPADATA_API_KEY="sd-123"))
         self.assertEqual(s.supadata_api_key, "sd-123")
 
+    def test_jina_enabled_defaults_true_and_toggles(self):
+        self.assertTrue(Settings.from_env(_valid_env()).jina_enabled)
+        self.assertFalse(Settings.from_env(_valid_env(JINA_ENABLED="false")).jina_enabled)
+        self.assertTrue(Settings.from_env(_valid_env(JINA_ENABLED="yes")).jina_enabled)
+
+    def test_jina_api_key_optional(self):
+        self.assertIsNone(Settings.from_env(_valid_env()).jina_api_key)
+        self.assertEqual(
+            Settings.from_env(_valid_env(JINA_API_KEY="jk")).jina_api_key, "jk"
+        )
+
     def test_slack_fields_optional_and_read(self):
         s0 = Settings.from_env(_valid_env())
         self.assertIsNone(s0.slack_bot_token)
