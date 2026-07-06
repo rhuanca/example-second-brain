@@ -82,11 +82,11 @@ organized by **tags** — 2–5 topic tags from the summary plus a `source` tag
 (`article` / `youtube` / `medium`), so you can filter by topic or where it came
 from.
 
-For **YouTube and Medium** captures (whose raw text is costly/unreliable to
-re-fetch), the full transcript / article text is also preserved as a companion
-file `transcripts/<note>.transcript.md`, linked both ways from the note. The
-`.transcript.md` marker makes transcripts findable by extension regardless of
-folder, so you can reorganize them later in bulk. Example note:
+**Every** capture also preserves the full canonical Markdown of the source as a
+companion `sources/<note>.source.md`, linked both ways from the note — so nothing
+is lost, you can re-summarize later without re-fetching, and `/ask` can draw on the
+full content (see `specs/design-canonical-archive.md`). The `.source.md` marker
+makes archives findable by extension regardless of folder. Example note:
 
 ```markdown
 ---
@@ -94,7 +94,7 @@ title: "Building Agentic Systems"
 source: "https://example.com/post"
 date: 2026-06-30
 tags: [agentic-dev, llm, youtube]
-transcript: "[[transcripts/2026-06-30-building-agentic-systems.transcript]]"
+archive: "[[sources/2026-06-30-building-agentic-systems.source]]"
 ---
 ## TL;DR
 ...

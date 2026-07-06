@@ -78,7 +78,12 @@ def fetch_transcript(
     except Exception:  # noqa: BLE001 — title is best-effort
         title = None
 
-    return Article(title=title or f"YouTube video {vid}", text=text, source="youtube")
+    return Article(
+        title=title or f"YouTube video {vid}",
+        text=text,
+        source="youtube",
+        kind="transcript",
+    )
 
 
 def _transcript_error_message(exc: Exception) -> str:

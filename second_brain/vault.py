@@ -19,10 +19,10 @@ from second_brain.urls import normalize_url
 _SLUG_MAX_LEN = 60
 _slug_strip_re = re.compile(r"[^a-z0-9]+")
 
-# Raw transcripts/full-text are stored here as `<note-stem>.transcript.md`. The
-# `.transcript.md` marker makes them findable by extension regardless of folder,
-# so a future reorg is a bulk glob rather than a guess.
-TRANSCRIPTS_DIR = "transcripts"
+# The canonical Markdown archive of each source is stored here as
+# `<note-stem>.source.md`. The `.source.md` marker makes archives findable by
+# extension regardless of folder, so a future reorg is a bulk glob.
+SOURCES_DIR = "sources"
 
 
 def slugify(title: str) -> str:
@@ -39,13 +39,13 @@ def note_filename(title: str, date: _dt.date) -> str:
 
 
 def render_note(
-    summary: Summary, source_url: str, date: _dt.date, *, transcript_link: str | None = None
+    summary: Summary, source_url: str, date: _dt.date, *, archive_link: str | None = None
 ) -> str:
     """Render a Summary into Markdown with YAML frontmatter.
 
-    When `transcript_link` (a vault-relative target like
-    `transcripts/2026-07-03-slug.transcript`) is given, the note links down to the
-    stored transcript via a frontmatter field and a `## Transcript` section.
+    When `archive_link` (a vault-relative target like
+    `sources/2026-07-03-slug.source`) is given, the note links down to the stored
+    canonical archive via an `archive:` frontmatter field and a `## Source` section.
     """
     body_sections = [f"## TL;DR\n\n{summary.tldr.strip()}"]
 
@@ -63,31 +63,33 @@ def render_note(
         date=date.isoformat(),
         tags=list(summary.tags),
     )
-    if transcript_link:
-        meta["transcript"] = f"[[{transcript_link}]]"
-        body_sections.append(f"## Transcript\n\n[[{transcript_link}|Full transcript]]")
+    if archive_link:
+        meta["archive"] = f"[[{archive_link}]]"
+        body_sections.append(f"## Source\n\n[[{archive_link}|Full source]]")
 
     return frontmatter.dumps(frontmatter.Post("\n\n".join(body_sections), **meta))
 
 
-def render_transcript(
+def render_archive(
     title: str,
     source_url: str,
     date: _dt.date,
-    text: str,
+    markdown: str,
     *,
     note_stem: str,
+    kind: str = "article",
     source_type: str | None = None,
 ) -> str:
-    """Render a raw transcript/full-text companion note, linked back to its note."""
-    tags = ["transcript"]
+    """Render the canonical Markdown archive of a source, linked back to its note."""
+    tags = ["source"]
     if source_type:
         tags.append(source_type)
     post = frontmatter.Post(
-        text.strip(),
-        title=f"{title} — transcript",
+        markdown.strip(),
+        title=f"{title} — source",
         source=source_url,
         date=date.isoformat(),
+        kind=kind,
         tags=tags,
         note=f"[[{note_stem}]]",
     )
@@ -135,13 +137,14 @@ class Vault:
         source_url: str,
         date: _dt.date,
         *,
-        transcript: str | None = None,
+        archive: str | None = None,
+        kind: str = "article",
         source_type: str | None = None,
     ) -> Path:
         """Render and write a note flat at the vault root; refuse duplicates.
 
-        When `transcript` is given (raw transcript / full text), it's stored as a
-        companion `transcripts/<note-stem>.transcript.md` and linked from the note.
+        When `archive` (the canonical Markdown of the source) is given, it's stored
+        as a companion `sources/<note-stem>.source.md` and linked from the note.
         Returns the path of the written note. Raises DuplicateNoteError if a note
         for the same source URL already exists.
         """
@@ -153,21 +156,21 @@ class Vault:
         path = _unique_path(self.root, note_filename(summary.title, date))
         stem = path.stem
 
-        transcript_link = None
-        if transcript and transcript.strip():
-            folder = self.root / TRANSCRIPTS_DIR
+        archive_link = None
+        if archive and archive.strip():
+            folder = self.root / SOURCES_DIR
             folder.mkdir(parents=True, exist_ok=True)
-            (folder / f"{stem}.transcript.md").write_text(
-                render_transcript(
-                    summary.title, source_url, date, transcript,
-                    note_stem=stem, source_type=source_type,
+            (folder / f"{stem}.source.md").write_text(
+                render_archive(
+                    summary.title, source_url, date, archive,
+                    note_stem=stem, kind=kind, source_type=source_type,
                 ),
                 encoding="utf-8",
             )
-            transcript_link = f"{TRANSCRIPTS_DIR}/{stem}.transcript"
+            archive_link = f"{SOURCES_DIR}/{stem}.source"
 
         path.write_text(
-            render_note(summary, source_url, date, transcript_link=transcript_link),
+            render_note(summary, source_url, date, archive_link=archive_link),
             encoding="utf-8",
         )
         return path

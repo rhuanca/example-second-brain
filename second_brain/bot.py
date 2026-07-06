@@ -28,9 +28,6 @@ NO_URL_MESSAGE = (
     "second brain."
 )
 
-# Sources whose raw text is costly/unreliable to re-fetch — keep the transcript.
-_STORE_RAW_SOURCES = {"youtube", "medium"}
-
 
 @dataclass
 class PipelineResult:
@@ -80,14 +77,14 @@ def handle_url(
 
     summary.tags = _with_source_tag(summary.tags, article.source)
 
-    # Preserve the raw text for sources that are costly/unreliable to re-fetch.
-    store_raw = article.source in _STORE_RAW_SOURCES
+    # Always archive the full canonical source alongside the summary.
     try:
         path = vault.write_note(
             summary,
             url,
             today(),
-            transcript=article.text if store_raw else None,
+            archive=article.text,
+            kind=article.kind,
             source_type=article.source,
         )
     except DuplicateNoteError as exc:

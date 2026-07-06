@@ -74,23 +74,28 @@ class HandleUrlTest(unittest.TestCase):
         self.assertIn("youtube", post["tags"])
         self.assertIn("agentic-dev", post["tags"])
 
-    def test_youtube_stores_transcript_companion(self):
-        result = self._run(
+    def test_every_capture_archives_the_source(self):
+        # YouTube (transcript) …
+        r1 = self._run(
             "https://youtu.be/dQw4w9WgXcQ",
-            fetch=lambda url: Article("A Talk", "the raw transcript", source="youtube"),
+            fetch=lambda url: Article(
+                "A Talk", "the raw transcript", source="youtube", kind="transcript"
+            ),
             summarize=lambda *a, **k: _summary(),
         )
-        tpath = self.vault.root / "transcripts" / f"{result.note_path.stem}.transcript.md"
-        self.assertTrue(tpath.exists())
-        self.assertIn("the raw transcript", tpath.read_text())
+        a1 = self.vault.root / "sources" / f"{r1.note_path.stem}.source.md"
+        self.assertTrue(a1.exists())
+        self.assertIn("the raw transcript", a1.read_text())
 
-    def test_plain_article_stores_no_transcript(self):
-        self._run(
+        # … and a plain article is archived too (the shift: always archive).
+        r2 = self._run(
             "https://example.com/post",
-            fetch=lambda url: Article("Post", "body text", source="article"),
+            fetch=lambda url: Article("Post", "the article body", source="article"),
             summarize=lambda *a, **k: _summary(),
         )
-        self.assertFalse((self.vault.root / "transcripts").exists())
+        a2 = self.vault.root / "sources" / f"{r2.note_path.stem}.source.md"
+        self.assertTrue(a2.exists())
+        self.assertIn("the article body", a2.read_text())
 
     def test_no_url_returns_hint_and_writes_nothing(self):
         result = self._run("just a note, no link")

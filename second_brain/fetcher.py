@@ -12,8 +12,9 @@ class FetchError(Exception):
 @dataclass
 class Article:
     title: str
-    text: str
-    source: str = "article"
+    text: str  # the canonical Markdown archive body
+    source: str = "article"  # source_type tag: article / youtube / medium / pdf
+    kind: str = "article"  # what the archive is: article / transcript / pdf
 
 
 def fetch(url: str, *, downloader=None, extractor=None) -> Article:

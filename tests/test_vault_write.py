@@ -21,7 +21,7 @@ def _summary(**overrides):
     return Summary(**data)
 
 
-class TranscriptWriteTest(unittest.TestCase):
+class SourceArchiveWriteTest(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.vault = Vault(Path(self._tmp.name))
@@ -29,40 +29,40 @@ class TranscriptWriteTest(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    def test_transcript_companion_written_and_linked(self):
+    def test_archive_companion_written_and_linked(self):
         import frontmatter
 
         note_path = self.vault.write_note(
             _summary(title="Agent Memory"),
             "https://youtu.be/abc",
             DATE,
-            transcript="the full transcript body",
+            archive="the full source body",
+            kind="transcript",
             source_type="youtube",
         )
         stem = note_path.stem
-        tpath = self.vault.root / "transcripts" / f"{stem}.transcript.md"
-        self.assertTrue(tpath.exists())
+        apath = self.vault.root / "sources" / f"{stem}.source.md"
+        self.assertTrue(apath.exists())
 
-        # transcript file holds the raw text and links back to the note
-        tpost = frontmatter.load(str(tpath))
-        self.assertEqual(tpost.content, "the full transcript body")
-        self.assertEqual(tpost["note"], f"[[{stem}]]")
+        # archive file holds the raw markdown and links back to the note
+        apost = frontmatter.load(str(apath))
+        self.assertEqual(apost.content, "the full source body")
+        self.assertEqual(apost["kind"], "transcript")
+        self.assertEqual(apost["note"], f"[[{stem}]]")
 
-        # note links down to the transcript
+        # note links down to the archive
         npost = frontmatter.load(str(note_path))
-        self.assertEqual(
-            npost["transcript"], f"[[transcripts/{stem}.transcript]]"
-        )
+        self.assertEqual(npost["archive"], f"[[sources/{stem}.source]]")
 
-    def test_no_transcript_means_no_transcripts_folder(self):
+    def test_no_archive_means_no_sources_folder(self):
         self.vault.write_note(_summary(), "https://example.com/post", DATE)
-        self.assertFalse((self.vault.root / "transcripts").exists())
+        self.assertFalse((self.vault.root / "sources").exists())
 
-    def test_blank_transcript_is_skipped(self):
+    def test_blank_archive_is_skipped(self):
         self.vault.write_note(
-            _summary(), "https://example.com/post", DATE, transcript="   "
+            _summary(), "https://example.com/post", DATE, archive="   "
         )
-        self.assertFalse((self.vault.root / "transcripts").exists())
+        self.assertFalse((self.vault.root / "sources").exists())
 
 
 class VaultWriteTest(unittest.TestCase):

@@ -6,8 +6,8 @@ import frontmatter
 from second_brain.models import Summary
 from second_brain.vault import (
     note_filename,
+    render_archive,
     render_note,
-    render_transcript,
     slugify,
 )
 
@@ -72,35 +72,37 @@ class RenderTest(unittest.TestCase):
         self.assertNotIn("## Key technical points", rendered)
         self.assertNotIn("## Prototype ideas", rendered)
 
-    def test_no_transcript_link_by_default(self):
+    def test_no_archive_link_by_default(self):
         rendered = render_note(_summary(), "https://example.com/post", DATE)
-        self.assertNotIn("## Transcript", rendered)
-        self.assertNotIn("transcript", frontmatter.loads(rendered).metadata)
+        self.assertNotIn("## Source", rendered)
+        self.assertNotIn("archive", frontmatter.loads(rendered).metadata)
 
-    def test_transcript_link_added_when_provided(self):
-        link = "transcripts/2026-06-30-building-agentic-systems.transcript"
+    def test_archive_link_added_when_provided(self):
+        link = "sources/2026-06-30-building-agentic-systems.source"
         rendered = render_note(
-            _summary(), "https://example.com/post", DATE, transcript_link=link
+            _summary(), "https://example.com/post", DATE, archive_link=link
         )
-        self.assertIn("## Transcript", rendered)
-        self.assertIn(f"[[{link}|Full transcript]]", rendered)
-        self.assertEqual(frontmatter.loads(rendered)["transcript"], f"[[{link}]]")
+        self.assertIn("## Source", rendered)
+        self.assertIn(f"[[{link}|Full source]]", rendered)
+        self.assertEqual(frontmatter.loads(rendered)["archive"], f"[[{link}]]")
 
 
-class RenderTranscriptTest(unittest.TestCase):
-    def test_transcript_file_shape(self):
-        rendered = render_transcript(
+class RenderArchiveTest(unittest.TestCase):
+    def test_archive_file_shape(self):
+        rendered = render_archive(
             "Agent Memory",
             "https://youtu.be/abc",
             DATE,
             "  full transcript text  ",
             note_stem="2026-06-30-agent-memory",
+            kind="transcript",
             source_type="youtube",
         )
         post = frontmatter.loads(rendered)
-        self.assertEqual(post["title"], "Agent Memory — transcript")
+        self.assertEqual(post["title"], "Agent Memory — source")
         self.assertEqual(post["source"], "https://youtu.be/abc")
-        self.assertEqual(post["tags"], ["transcript", "youtube"])
+        self.assertEqual(post["kind"], "transcript")
+        self.assertEqual(post["tags"], ["source", "youtube"])
         self.assertEqual(post["note"], "[[2026-06-30-agent-memory]]")
         self.assertEqual(post.content, "full transcript text")
 
