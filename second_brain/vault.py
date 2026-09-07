@@ -14,7 +14,7 @@ from pathlib import Path
 import frontmatter
 
 from second_brain.models import Summary
-from second_brain.urls import normalize_url
+from second_brain.urls import dedup_key
 
 _SLUG_MAX_LEN = 60
 _slug_strip_re = re.compile(r"[^a-z0-9]+")
@@ -120,11 +120,15 @@ class Vault:
         yield from self.root.glob("*.md")
 
     def find_by_url(self, url: str) -> Path | None:
-        """Return the note whose `source` matches `url` (normalized), else None."""
-        target = normalize_url(url)
+        """Return the note whose `source` is the same source as `url`, else None.
+
+        Compares by `dedup_key`, not by the stored URL, so a link re-shared with a
+        fresh tracking token or in another YouTube URL shape still matches.
+        """
+        target = dedup_key(url)
         for note in self.iter_notes():
             source = _read_source(note)
-            if source and normalize_url(source) == target:
+            if source and dedup_key(source) == target:
                 return note
         return None
 

@@ -1,6 +1,6 @@
 import unittest
 
-from second_brain.urls import extract_url, normalize_url
+from second_brain.urls import dedup_key, extract_url, normalize_url
 
 
 class ExtractUrlTest(unittest.TestCase):
@@ -64,3 +64,44 @@ class NormalizeUrlTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DedupKeyTest(unittest.TestCase):
+    # The real pair that got saved twice: one video, two share tokens.
+    SHARED_A = "https://youtu.be/ve7AA01vplE?si=-2YhO5vh9RcEiSzu"
+    SHARED_B = "https://youtu.be/ve7AA01vplE?si=GxFa4HqDaut8XPNy"
+
+    def test_youtube_share_tokens_collapse(self):
+        self.assertEqual(dedup_key(self.SHARED_A), dedup_key(self.SHARED_B))
+
+    def test_normalize_url_strips_si(self):
+        self.assertEqual(normalize_url(self.SHARED_A), "https://youtu.be/ve7AA01vplE")
+
+    def test_every_youtube_shape_shares_one_key(self):
+        shapes = [
+            "https://youtu.be/ve7AA01vplE",
+            "https://www.youtube.com/watch?v=ve7AA01vplE",
+            "https://www.youtube.com/watch?v=ve7AA01vplE&t=573s",
+            "https://m.youtube.com/watch?v=ve7AA01vplE",
+            "https://www.youtube.com/live/ve7AA01vplE?si=abc",
+            "https://www.youtube.com/shorts/ve7AA01vplE",
+        ]
+        keys = {dedup_key(u) for u in shapes}
+        self.assertEqual(keys, {"youtube:ve7AA01vplE"})
+
+    def test_different_videos_keep_different_keys(self):
+        self.assertNotEqual(
+            dedup_key("https://youtu.be/ve7AA01vplE"),
+            dedup_key("https://youtu.be/ihmashJt3I4"),
+        )
+
+    def test_non_youtube_url_drops_www_and_tracking(self):
+        self.assertEqual(
+            dedup_key("https://www.trydeepteam.com/docs/getting-started/?utm_source=x"),
+            "https://trydeepteam.com/docs/getting-started",
+        )
+
+    def test_non_youtube_distinct_paths_stay_distinct(self):
+        self.assertNotEqual(
+            dedup_key("https://example.com/a"), dedup_key("https://example.com/b")
+        )

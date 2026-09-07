@@ -104,6 +104,20 @@ class VaultWriteTest(unittest.TestCase):
             self.vault.is_duplicate("https://example.com/post/?utm_source=nl")
         )
 
+    def test_duplicate_detected_across_youtube_share_tokens(self):
+        self.vault.write_note(
+            _summary(), "https://youtu.be/ve7AA01vplE?si=-2YhO5vh9RcEiSzu", DATE
+        )
+        self.assertTrue(
+            self.vault.is_duplicate("https://youtu.be/ve7AA01vplE?si=GxFa4HqDaut8XPNy")
+        )
+
+    def test_duplicate_detected_across_youtube_url_shapes(self):
+        self.vault.write_note(_summary(), "https://youtu.be/ve7AA01vplE", DATE)
+        self.assertTrue(
+            self.vault.is_duplicate("https://www.youtube.com/watch?v=ve7AA01vplE&t=90s")
+        )
+
     def test_second_write_raises_duplicate(self):
         url = "https://example.com/post"
         first = self.vault.write_note(_summary(), url, DATE)

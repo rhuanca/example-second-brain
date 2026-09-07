@@ -125,6 +125,24 @@ class HandleUrlTest(unittest.TestCase):
         self.assertIn("Couldn't read", result.reply)
         self.assertEqual(list(self.vault.iter_notes()), [])
 
+    def test_reshared_youtube_link_is_reported_without_fetching(self):
+        """A re-share mints a fresh ?si= token; it must still be caught, and
+        caught before the expensive fetch/summarize."""
+        self.vault.write_note(
+            _summary(), "https://youtu.be/ve7AA01vplE?si=-2YhO5vh9RcEiSzu", DATE
+        )
+
+        def _boom(*a, **k):
+            raise AssertionError("must not fetch/summarize a known link")
+
+        result = self._run(
+            "https://youtu.be/ve7AA01vplE?si=GxFa4HqDaut8XPNy",
+            fetch=_boom,
+            summarize=_boom,
+        )
+        self.assertFalse(result.ok)
+        self.assertIn("Already in your second brain", result.reply)
+
     def test_write_duplicate_race_is_reported(self):
         from second_brain.vault import DuplicateNoteError
 
