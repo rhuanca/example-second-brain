@@ -1,4 +1,6 @@
+import contextlib
 import importlib.util
+import io
 import sys
 import tempfile
 import unittest
@@ -88,3 +90,55 @@ class WriteTopicsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SplitApplyTest(unittest.TestCase):
+    """Discovery runs where the API key is; applying runs where the vault is."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        (self.root / "n0.md").write_text(NOTE, encoding="utf-8")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _run(self, argv):
+        import sys as _sys
+
+        old = _sys.argv
+        _sys.argv = ["discover_topics.py", str(self.root), *argv]
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                discover_topics.main()
+        finally:
+            _sys.argv = old
+
+    def test_from_stored_applies_without_calling_the_api(self):
+        from second_brain.kb.topics import Taxonomy, Topic, save_taxonomy
+
+        stored = Path(self._tmp.name) / "topics.json"
+        save_taxonomy(
+            Taxonomy(topics=[Topic(id="agents", name="Agents", note_ids=["n0"])]), stored
+        )
+        # discover() would raise without a client or key; reaching the write proves
+        # the stored path never calls out.
+        original = discover_topics.load_taxonomy
+        discover_topics.load_taxonomy = lambda *a, **k: discover_topics.load_taxonomy_from(stored)
+        try:
+            self._run(["--apply", "--from-stored"])
+        finally:
+            discover_topics.load_taxonomy = original
+
+        post = frontmatter.load(str(self.root / "n0.md"))
+        self.assertEqual(list(post["topics"]), ["agents"])
+
+    def test_from_stored_without_a_taxonomy_exits_clearly(self):
+        original = discover_topics.load_taxonomy
+        discover_topics.load_taxonomy = lambda *a, **k: None
+        try:
+            with self.assertRaises(SystemExit) as ctx:
+                self._run(["--apply", "--from-stored"])
+        finally:
+            discover_topics.load_taxonomy = original
+        self.assertIn("Run discovery first", str(ctx.exception))
