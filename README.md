@@ -160,61 +160,148 @@ agent memory?"*.
 
 ## Architecture
 
+Two planes that meet at the vault. The **capture plane** writes: Telegram in, a
+Markdown note out. The **knowledge plane** only reads what capture produced.
+Nothing is pushed between them — the vault on disk *is* the interface, so capture
+can never be broken by a reader being down.
+
 Every fetcher returns the same `Article`, so the pipeline is source-agnostic —
 adding a source is a new module plus one line in `sources.py`.
 
+Dashed nodes are designed but not built (see `specs/design-knowledge-base.md`).
+
 ```mermaid
 flowchart TD
-    tg["Telegram — link or /ask"] --> bot["bot.py — allow-list + async handlers"]
-    bot --> handle["handle_url — capture pipeline"]
-    bot --> ask["ask.py — /ask retrieve + answer"]
-    ask --> vault
-    ask --> claude
-    handle --> urls["urls.py — extract + normalize"]
-    handle --> sources["sources.py — dispatch by source"]
-    handle --> summarizer["summarizer.py — Claude → Summary"]
-    handle --> vault["vault.py — render + dedup + write"]
-    sources --> youtube["youtube.py — transcript"]
-    sources --> medium["medium.py — cookie fetch"]
-    sources --> fetcher["fetcher.py — trafilatura"]
+    subgraph capture["Capture plane — writes"]
+        tg["Telegram — link or /ask"] --> bot["bot.py — allow-list, async handlers"]
+        bot --> handle["handle_url — capture pipeline"]
+        handle --> urls["urls.py — extract, normalize, dedup_key"]
+        handle --> sources["sources.py — dispatch by source"]
+        handle --> summarizer["summarizer.py — Claude → Summary"]
+        handle --> vault["vault.py — render, dedup, write"]
+        sources --> youtube["youtube.py — transcript"]
+        sources --> medium["medium.py — cookie fetch"]
+        sources --> jina["jina.py — r.jina.ai markdown"]
+        sources --> fetcher["fetcher.py — trafilatura"]
+    end
+
+    subgraph knowledge["Knowledge plane — reads only"]
+        slack["Slack — DM a question"] --> slackbot["slack_bot.py — ask-only"]
+        slackbot --> ask["ask.py — retrieve + answer"]
+        kbnotes["kb/notes.py — notes → Cards"] --> kbtopics["kb/topics.py — discover topics"]
+        mcp["kb/mcp_server.py — MCP tools"]:::planned
+        web["kb/web.py — browse UI"]:::planned
+    end
+
+    obsidian[("Obsidian vault — flat notes + sources/ archives")]
+
+    bot --> ask
+    vault --> obsidian
+    obsidian --> ask
+    obsidian --> kbnotes
+    kbtopics -.->|"scripts/discover_topics.py --apply"| obsidian
+    kbtopics --> mcp
+    kbtopics --> web
+    mcp --> agents["Claude Code / Codex"]:::planned
+    web --> browser["Browser"]:::planned
+
     summarizer --> claude["Claude API"]
-    vault --> obsidian["Obsidian vault — tagged markdown"]
-    youtube --> yt["YouTube"]
+    ask --> claude
+    kbtopics --> claude
+    youtube --> yt["YouTube / Supadata"]
     medium --> md["Medium"]
-    fetcher --> web["Web"]
+    jina --> web2["Web via Jina"]
+    fetcher --> web3["Web"]
 
     classDef focal fill:#fdecc8,stroke:#e0a93f,color:#7a4b00;
     classDef ext fill:#eeeeee,stroke:#bbbbbb,color:#333333;
+    classDef planned fill:#ffffff,stroke:#999999,color:#666666,stroke-dasharray: 5 3;
     class handle focal;
-    class tg,claude,obsidian,yt,md,web ext;
+    class tg,slack,claude,yt,md,web2,web3 ext;
+    class obsidian focal;
 ```
 
-Data flow for one message — the branch (YouTube / Medium / Article) re-converges
-because each produces an `Article`. Any failure short-circuits to a clear reply,
-and the note write is always last (so no partial notes):
+### Capture: one message end to end
+
+The branch (YouTube / Medium / Jina / article) re-converges because each produces
+an `Article`. Any failure short-circuits to a clear reply. Duplicates are caught
+twice — cheaply before the fetch and LLM cost, then again at write time so two
+concurrent sends can't both land:
 
 ```mermaid
 flowchart TD
-    msg["Incoming message — text from Telegram"] --> extract["extract_url — normalize → dedup key"]
-    extract --> dedup["find_by_url — already saved? → stop"]
+    msg["Incoming message — text from Telegram"] --> extract["extract_url — normalize, strip tracking"]
+    extract --> dedup["find_by_url — dedup_key match? → 'already saved', stop"]
     dedup --> dispatch["sources.fetch — pick the source"]
     dispatch --> yt["YouTube — transcript → Article"]
     dispatch --> md["Medium — cookie HTML → Article"]
-    dispatch --> art["Article — trafilatura → Article"]
+    dispatch --> jina["Jina — markdown + image captions → Article"]
+    dispatch --> art["trafilatura fallback → Article"]
     yt --> sum["summarize — Claude → Summary"]
     md --> sum
+    jina --> sum
     art --> sum
-    sum --> write["write_note — flat + tags"]
-    write --> done["Reply + note saved"]
+    sum --> write["write_note — re-checks dedup, then writes"]
+    write --> note["note.md — TL;DR, key points, prototype ideas"]
+    write --> archive["sources/&lt;stem&gt;.source.md — full text"]
+    note --> done["Reply + note saved"]
+    archive --> done
 
     classDef focal fill:#fdecc8,stroke:#e0a93f,color:#7a4b00;
     classDef ext fill:#eeeeee,stroke:#bbbbbb,color:#333333;
     class done focal;
-    class yt,md,art ext;
+    class yt,md,jina,art ext;
 ```
 
+### Knowledge: from notes to a browsable library
+
+Free-form tags fragment badly (224 distinct tags over 75 notes, 167 used exactly
+once), so topics are **derived** rather than taken from tags. The whole corpus of
+cards is ~12k tokens, which is why one Claude call replaces embeddings and a
+clustering library at this size.
+
+Everything downstream trades on the same idea: send **cards** (title + TL;DR,
+~100 tokens), fetch a full note or its archive only once a card proves relevant.
+Ten cards is ~1k tokens where ten archives would be ~47k.
+
+```mermaid
+flowchart LR
+    obsidian[("Obsidian vault<br/>flat notes + sources/ archives")] --> load["ask.load_notes — frontmatter + body"]
+    load --> cards["kb/notes.py — Card<br/>title + TL;DR ≈ 100 tokens"]
+    cards --> discover["kb/topics.py — one Claude call<br/>over every card (~12k tokens)"]
+    discover --> taxonomy[["kb/topics.json — stable ids"]]
+    taxonomy -.->|"--apply"| frontmatter["topics: in note frontmatter"]
+    frontmatter --> obsidian
+
+    taxonomy --> retrieval["kb/retrieval.py — topic filter<br/>then semantic rank"]:::planned
+    cards --> retrieval
+    retrieval --> mcp["MCP tools<br/>list_topics · search_notes<br/>get_note · get_source · ask"]:::planned
+    retrieval --> web["Browse UI<br/>topics → cards → note"]:::planned
+    mcp --> tunnel{{"Cloudflare Tunnel + Access"}}:::planned
+    web --> tunnel
+    tunnel --> outside["Claude Code · Codex · browser"]:::planned
+
+    classDef focal fill:#fdecc8,stroke:#e0a93f,color:#7a4b00;
+    classDef planned fill:#ffffff,stroke:#999999,color:#666666,stroke-dasharray: 5 3;
+    class cards,taxonomy focal;
+```
+
+### Processes and storage
+
+| Piece | What it is |
+|---|---|
+| `main.py` → `rr-second-brain-telegram` | Capture. The only writer. |
+| `slack_main.py` → `rr-second-brain-slack` | Ask-only. A link here gets a nudge to use Telegram. |
+| Obsidian vault | Source of truth. Flat `*.md` + `sources/*.source.md` archives. |
+| `second_brain/kb/topics.json` | The taxonomy, versioned in git so drift is visible. |
+| `scripts/*.py` | User-run maintenance (dedupe, flatten, discover topics). Dry-run by default. |
+
+No database. At ~75 notes growing ~35/month, the corpus is ~26k words of notes
+and ~233k of archives — it loads into memory in milliseconds.
+
 > Diagram sources live in `.diagrams/` as Mermaid (`.mmd`) — the same content as
-> the blocks above, ready to paste into an Obsidian note.
+> the blocks above, ready to paste into an Obsidian note. The `.png`/`.svg`
+> renders alongside them are from July and are now stale.
 
 ## Roadmap
 

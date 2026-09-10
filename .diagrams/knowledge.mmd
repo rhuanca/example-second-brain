@@ -1,0 +1,19 @@
+flowchart LR
+    obsidian[("Obsidian vault<br/>flat notes + sources/ archives")] --> load["ask.load_notes — frontmatter + body"]
+    load --> cards["kb/notes.py — Card<br/>title + TL;DR ≈ 100 tokens"]
+    cards --> discover["kb/topics.py — one Claude call<br/>over every card (~12k tokens)"]
+    discover --> taxonomy[["kb/topics.json — stable ids"]]
+    taxonomy -.->|"--apply"| frontmatter["topics: in note frontmatter"]
+    frontmatter --> obsidian
+
+    taxonomy --> retrieval["kb/retrieval.py — topic filter<br/>then semantic rank"]:::planned
+    cards --> retrieval
+    retrieval --> mcp["MCP tools<br/>list_topics · search_notes<br/>get_note · get_source · ask"]:::planned
+    retrieval --> web["Browse UI<br/>topics → cards → note"]:::planned
+    mcp --> tunnel{{"Cloudflare Tunnel + Access"}}:::planned
+    web --> tunnel
+    tunnel --> outside["Claude Code · Codex · browser"]:::planned
+
+    classDef focal fill:#fdecc8,stroke:#e0a93f,color:#7a4b00;
+    classDef planned fill:#ffffff,stroke:#999999,color:#666666,stroke-dasharray: 5 3;
+    class cards,taxonomy focal;
