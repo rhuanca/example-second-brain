@@ -1,8 +1,13 @@
 # Secrets / local config
 .env
 
-# Obsidian vault (data, not code) — keep out of the repo
+# Obsidian vault (data, not code) — keep out of the repo.
+# This repo is public: a stray `git add -A` here would publish every note and
+# every full-text archive. Match vault directories by name, not one fixed path.
 /vault/
+Renan_Vault/
+*Vault*/
+*.source.md
 
 # Python
 __pycache__/
