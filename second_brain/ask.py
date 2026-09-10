@@ -45,6 +45,9 @@ class Note:
     source: str
     tags: list[str] = field(default_factory=list)
     body: str = ""
+    date: str = ""
+    # Assigned by `scripts/discover_topics.py`; empty until that has been run.
+    topics: list[str] = field(default_factory=list)
 
 
 def ask(
@@ -83,19 +86,28 @@ def load_notes(vault: Vault) -> list[Note]:
         except Exception:  # noqa: BLE001 — skip unreadable files
             continue
         meta = post.metadata
-        tags = meta.get("tags") or []
-        if not isinstance(tags, list):
-            tags = [str(tags)]
+        tags = _str_list(meta.get("tags"))
         notes.append(
             Note(
                 path=path,
                 title=str(meta.get("title") or path.stem),
                 source=str(meta.get("source") or ""),
-                tags=[str(t) for t in tags],
+                tags=tags,
                 body=post.content or "",
+                date=str(meta.get("date") or ""),
+                topics=_str_list(meta.get("topics")),
             )
         )
     return notes
+
+
+def _str_list(value) -> list[str]:
+    """Coerce a frontmatter field to a list of strings (it may be a bare scalar)."""
+    if not value:
+        return []
+    if not isinstance(value, list):
+        return [str(value)]
+    return [str(v) for v in value]
 
 
 def search(notes: list[Note], question: str, *, limit: int = 5) -> list[Note]:
