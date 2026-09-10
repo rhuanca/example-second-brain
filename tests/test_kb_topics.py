@@ -24,22 +24,28 @@ class _Block:
 
 
 class _Response:
-    def __init__(self, text):
+    def __init__(self, text, stop_reason="end_turn"):
         self.content = [_Block(text)]
+        self.stop_reason = stop_reason
 
 
 class _Client:
-    """Records the prompt it was given and replays a canned reply."""
+    """Records the call it was given and replays a canned reply."""
 
-    def __init__(self, payload):
+    def __init__(self, payload, stop_reason="end_turn"):
         self.payload = payload
-        self.prompts = []
+        self.stop_reason = stop_reason
+        self.calls = []
         self.messages = self
 
-    def create(self, *, model, max_tokens, system, messages):
-        self.prompts.append(messages[0]["content"])
+    @property
+    def prompts(self):
+        return [c["messages"][0]["content"] for c in self.calls]
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
         text = self.payload if isinstance(self.payload, str) else json.dumps(self.payload)
-        return _Response(text)
+        return _Response(text, self.stop_reason)
 
 
 def _cards(n=4):
@@ -143,9 +149,49 @@ class DiscoverTest(unittest.TestCase):
         tax = discover(_cards(1), model="m", client=_Client(raw))
         self.assertEqual(tax.topics[0].id, "a")
 
-    def test_unparseable_reply_raises(self):
-        with self.assertRaises(TopicError):
-            discover(_cards(1), model="m", client=_Client("not json at all"))
+    def test_unparseable_reply_raises_with_the_evidence(self):
+        """A bare 'did not return usable JSON' is undiagnosable -- keep the reply."""
+        client = _Client("Sure! Here are your topics:")
+
+        with self.assertRaises(TopicError) as ctx:
+            discover(_cards(1), model="m", client=client)
+
+        self.assertIn("Sure! Here are your topics:", str(ctx.exception))
+        self.assertIn("stop_reason", str(ctx.exception))
+
+    def test_truncated_reply_says_so_plainly(self):
+        client = _Client('{"topics": [{"id": "a"', stop_reason="max_tokens")
+
+        with self.assertRaises(TopicError) as ctx:
+            discover(_cards(1), model="m", client=client)
+
+        self.assertIn("max_tokens", str(ctx.exception))
+
+    def test_requests_json_schema_so_prose_cannot_come_back(self):
+        client = _Client(_payload([{"id": "a", "name": "A", "note_ids": ["n0"]}]))
+
+        discover(_cards(1), model="m", client=client)
+
+        fmt = client.calls[0]["output_config"]["format"]
+        self.assertEqual(fmt["type"], "json_schema")
+        self.assertEqual(
+            sorted(fmt["schema"]["properties"]), ["topics", "unassigned"]
+        )
+
+    def test_output_budget_grows_with_the_library(self):
+        """Every note id is echoed back, so a constant budget truncates."""
+        small = _Client(_payload([{"id": "a", "name": "A", "note_ids": ["n0"]}]))
+        discover(_cards(2), model="m", client=small)
+
+        big = _Client(_payload([{"id": "a", "name": "A", "note_ids": ["n0"]}]))
+        discover(_cards(400), model="m", client=big)
+
+        self.assertGreater(big.calls[0]["max_tokens"], small.calls[0]["max_tokens"])
+
+    def test_explicit_max_tokens_is_respected(self):
+        client = _Client(_payload([{"id": "a", "name": "A", "note_ids": ["n0"]}]))
+        discover(_cards(1), model="m", client=client, max_tokens=1234)
+        self.assertEqual(client.calls[0]["max_tokens"], 1234)
 
     def test_no_cards_needs_no_client(self):
         self.assertEqual(discover([], model="m").topics, [])

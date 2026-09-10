@@ -66,6 +66,32 @@ or retire topics as the collection has shifted, but do not renumber or rename id
 """
 
 
+# Structured output: the API guarantees a response matching this shape, which
+# removes the "model wrapped it in prose" failure mode entirely.
+_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "topics": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "name": {"type": "string"},
+                    "description": {"type": "string"},
+                    "note_ids": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["id", "name", "description", "note_ids"],
+                "additionalProperties": False,
+            },
+        },
+        "unassigned": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["topics", "unassigned"],
+    "additionalProperties": False,
+}
+
+
 class TopicError(Exception):
     """Raised when a taxonomy cannot be produced."""
 
@@ -96,6 +122,16 @@ class Taxonomy:
         return out
 
 
+def _budget(card_count: int) -> int:
+    """Output budget for a taxonomy over `card_count` notes.
+
+    Every note id has to be echoed back, sometimes under more than one topic, and
+    on models with adaptive thinking the reasoning shares this budget -- so it has
+    to grow with the library rather than sit at a constant.
+    """
+    return max(16000, 200 * card_count)
+
+
 def suggest_target(card_count: int) -> int:
     """A sensible number of topics for a library of this size.
 
@@ -113,7 +149,7 @@ def discover(
     client=None,
     existing: Taxonomy | None = None,
     target: int | None = None,
-    max_tokens: int = 8000,
+    max_tokens: int | None = None,
 ) -> Taxonomy:
     """Derive a taxonomy from every card at once.
 
@@ -131,11 +167,21 @@ def discover(
     )
     response = client.messages.create(
         model=model,
-        max_tokens=max_tokens,
+        max_tokens=max_tokens or _budget(len(cards)),
         system=_SYSTEM,
         messages=[{"role": "user", "content": prompt}],
+        output_config={"format": {"type": "json_schema", "schema": _SCHEMA}},
     )
-    return _parse(_extract_text(response), known_ids={c.note_id for c in cards})
+
+    stop = getattr(response, "stop_reason", None)
+    raw = _extract_text(response)
+    if stop == "max_tokens":
+        raise TopicError(
+            "the reply was cut off by max_tokens before the JSON was complete. "
+            "Every note id has to fit in the response, so raise max_tokens "
+            f"(was {max_tokens or _budget(len(cards))}) or lower --target."
+        )
+    return _parse(raw, known_ids={c.note_id for c in cards}, stop_reason=stop)
 
 
 def load_taxonomy(path: Path = TOPICS_FILE) -> Taxonomy | None:
@@ -190,10 +236,15 @@ def _render_existing(taxonomy: Taxonomy | None) -> str:
     )
 
 
-def _parse(raw: str, *, known_ids: set[str]) -> Taxonomy:
+def _parse(raw: str, *, known_ids: set[str], stop_reason=None) -> Taxonomy:
     payload = _load_json(raw)
     if payload is None:
-        raise TopicError("the model did not return usable JSON")
+        # Never swallow the reply -- without it this failure is undiagnosable.
+        snippet = (raw or "").strip()[:400] or "(the reply had no text at all)"
+        raise TopicError(
+            f"the model did not return usable JSON (stop_reason={stop_reason!r}). "
+            f"Reply began: {snippet}"
+        )
 
     topics = []
     seen_slugs: set[str] = set()
