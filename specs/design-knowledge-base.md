@@ -396,3 +396,23 @@ Decisions taken at build time, and where the build differs from the text above:
   swap is a follow-up — it would make those processes load the ONNX model); the
   Batch API backfill was unnecessary at ~12k tokens; topic MOCs in the vault were
   not generated; the tunnel/Access setup is documented in DEPLOY.md, not automated.
+
+### Visuals and chat (2026-09-13, after first use)
+
+- **Topic colour** follows the topic, never its rank: the dataviz reference
+  palette's eight categorical slots in taxonomy order, a ninth topic onwards
+  sharing a neutral "Other"; label ink per fill chosen by measured contrast.
+- **Home** is a topic treemap (area = notes), saved-per-month columns, topic
+  pairs that share notes, and a card grid with YouTube thumbnails.
+- **Map** is a PCA projection of the card embeddings — no new dependency,
+  deterministic. A scatter only keeps a few colours apart, so all topics are
+  coloured only when there are three or fewer; otherwise one topic is highlighted
+  at a time. Labels anchor on each topic's medoid; coincident dots are spread.
+- **Timeline** stacks notes per month by main topic or source, with a table view.
+- **Chat** is stateless on the server: the browser sends the conversation and the
+  note ids earlier answers used. Each turn sends at most ten note summaries, never
+  archives. Citations are `[[note-id]]`, kept only if that note was provided.
+  `/api/chat` requires JSON and a same-origin `Origin`, since the Access cookie
+  would ride along on a cross-site POST. `chat.js` builds every node with
+  `textContent`; the CSP now allows `script-src 'self'` and nothing more.
+  Server-side refusal fallback is on for `claude-opus-5` / `claude-fable-5-1`.

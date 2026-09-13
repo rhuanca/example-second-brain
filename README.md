@@ -177,9 +177,19 @@ uv run python -m second_brain.kb.main                 # http://127.0.0.1:8765
   `ask`. Connect with
   `claude mcp add --transport http --scope user secondbrain http://127.0.0.1:8765/mcp -H "Authorization: Bearer <token>"`.
   Captured content is handed to agents fenced as untrusted third-party text.
-- **Browse UI** at `/`: topic tiles → note cards (filter by source and month) →
-  note → full source. It is closed until Cloudflare Access is configured; for
-  local use set `KB_WEB_ALLOW_UNAUTHENTICATED=true` and reach it over SSH.
+- **Browse UI** at `/`: a topic treemap, saved-per-month chart and card grid
+  (YouTube thumbnails, topic colours) → note → full source; `/notes` filters by
+  topic, source and month. It is closed until Cloudflare Access is configured; for
+  local use set `KB_WEB_ALLOW_UNAUTHENTICATED=true` (and reach it over SSH if it
+  runs elsewhere).
+- **Map** at `/map`: every note placed by similarity, so related reading clusters
+  together; pick a topic to highlight its notes. **Timeline** at `/timeline`: notes
+  saved per month by topic or source, each bar linking to those notes.
+- **Chat** at `/chat`: a conversation with your notes. Answers stream in, cite the
+  notes they use as links, and follow-ups keep context. It needs
+  `ANTHROPIC_API_KEY` and sends only the matching note *summaries* (never full
+  archives) to the Anthropic API per question; model and effort are
+  `KB_CHAT_MODEL` / `KB_CHAT_EFFORT`. Everything else stays on the machine.
 - **Topics** come from `scripts/discover_topics.py` (see "Knowledge" below); until
   it has run, everything still works and notes show as "not in any topic".
 - New captures are picked up automatically (the index updates only what changed).
@@ -221,9 +231,11 @@ flowchart TD
         kbnotes --> retrieval["kb/retrieval.py — index + topic/semantic search"]
         kbtopics --> retrieval
         retrieval --> mcp["kb/mcp_server.py — MCP tools"]
-        retrieval --> web["kb/web.py — browse UI"]
+        retrieval --> web["kb/web.py — browse UI · map · timeline"]
+        retrieval --> chat["kb/chat.py — chat with your notes"]
         auth["kb/auth.py — bearer token / Access JWT"] --> mcp
         auth --> web
+        auth --> chat
     end
 
     obsidian[("Obsidian vault — flat notes + sources/ archives")]
@@ -236,11 +248,13 @@ flowchart TD
     mcp --> ask
     mcp --> tunnel{{"Cloudflare Tunnel + Access"}}:::planned
     web --> tunnel
+    chat --> tunnel
     tunnel --> agents["Claude Code / Codex"]
     tunnel --> browser["Browser"]
 
     summarizer --> claude["Claude API"]
     ask --> claude
+    chat --> claude
     kbtopics --> claude
     youtube --> yt["YouTube / Supadata"]
     medium --> md["Medium"]
@@ -317,9 +331,11 @@ flowchart LR
     taxonomy --> retrieval["kb/retrieval.py — topic match<br/>then semantic rank"]
     index --> retrieval
     retrieval --> mcp["MCP tools (bearer token)<br/>list_topics · search_notes<br/>get_note · get_source · ask"]
-    retrieval --> web["Browse UI (Access JWT)<br/>topics → cards → note → source"]
+    retrieval --> web["Browse UI (Access JWT)<br/>treemap · cards · map · timeline"]
+    retrieval --> chatk["Chat (Access JWT)<br/>≤10 note summaries per turn → Claude"]
     mcp --> tunnel{{"Cloudflare Tunnel + Access"}}:::planned
     web --> tunnel
+    chatk --> tunnel
     tunnel --> outside["Claude Code · Codex · browser"]
 
     classDef focal fill:#fdecc8,stroke:#e0a93f,color:#7a4b00;
@@ -381,7 +397,8 @@ matrix for 1,300 notes would be ~2 MB.
   - `notes.py` — notes → cards; `topics.py` — topic discovery
   - `embeddings.py` — local embedding index; `retrieval.py` — `Library`: search + safe id lookups
   - `tools.py` — the five tools; `mcp_server.py` — MCP over streamable HTTP
-  - `web.py` + `templates/` — browse UI; `auth.py` — bearer token / Access JWT
+  - `web.py` + `templates/` — browse UI, map, timeline; `visuals.py` — chart geometry and topic colours
+  - `chat.py` + `static/chat.js` — chat with your notes; `auth.py` — bearer token / Access JWT
   - `app.py` — one FastAPI app for both; `main.py` — entry point
 - `scripts/` — maintenance: `dedupe_vault.py`, `flatten_vault.py`, `discover_topics.py`, `build_index.py`
 - `specs/` — the spec, plan, and task breakdown (spec-driven development)

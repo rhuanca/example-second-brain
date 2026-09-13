@@ -19,9 +19,11 @@ flowchart TD
         kbnotes --> retrieval["kb/retrieval.py — index + topic/semantic search"]
         kbtopics --> retrieval
         retrieval --> mcp["kb/mcp_server.py — MCP tools"]
-        retrieval --> web["kb/web.py — browse UI"]
+        retrieval --> web["kb/web.py — browse UI · map · timeline"]
+        retrieval --> chat["kb/chat.py — chat with your notes"]
         auth["kb/auth.py — bearer token / Access JWT"] --> mcp
         auth --> web
+        auth --> chat
     end
 
     obsidian[("Obsidian vault — flat notes + sources/ archives")]
@@ -34,11 +36,13 @@ flowchart TD
     mcp --> ask
     mcp --> tunnel{{"Cloudflare Tunnel + Access"}}:::planned
     web --> tunnel
+    chat --> tunnel
     tunnel --> agents["Claude Code / Codex"]
     tunnel --> browser["Browser"]
 
     summarizer --> claude["Claude API"]
     ask --> claude
+    chat --> claude
     kbtopics --> claude
     youtube --> yt["YouTube / Supadata"]
     medium --> md["Medium"]
