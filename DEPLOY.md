@@ -1,17 +1,18 @@
 # Deploy
 
-The project runs as **systemd user services** (one per channel), sharing one
-`.env` and one vault:
+The project runs as **systemd user services**, sharing one `.env` and one vault,
+all deployed by one script:
 
-| Service | Script | Role |
+| Service | Deploy | Role |
 |---|---|---|
-| `rr-second-brain-telegram` | `./deploy-telegram.sh` | **Telegram** — capture (required) |
-| `rr-second-brain-slack` | `./deploy-slack.sh` | **Slack** — ask (optional) |
-| `rr-second-brain-kb` | `./deploy-kb.sh` | **Knowledge base** — MCP for agents + browse UI, read-only (optional) |
+| `rr-second-brain-telegram` | `./deploy.sh telegram` | **Telegram** — capture (required) |
+| `rr-second-brain-slack` | `./deploy.sh slack` | **Slack** — ask (optional) |
+| `rr-second-brain-kb` | `./deploy.sh kb` | **Knowledge base** — MCP for agents, browse UI, chat; read-only (optional) |
 
 ## Prerequisites
 
 - Linux with systemd, and [uv](https://docs.astral.sh/uv/) installed
+- Logged in as the user the services should run as (over SSH, not `su`/`sudo`)
 - A filled `.env` in the project root (`cp env.example .env` then edit). Slack
   additionally needs `SLACK_BOT_TOKEN` / `SLACK_APP_TOKEN` / `SLACK_ALLOWED_USER_ID`.
   The knowledge base needs `KB_AUTH_TOKENS` (see below).
@@ -19,32 +20,38 @@ The project runs as **systemd user services** (one per channel), sharing one
 ## Deploy
 
 ```bash
-./deploy-telegram.sh   # Telegram (capture)
-./deploy-slack.sh      # Slack (ask) — only if you use Slack
-./deploy-kb.sh         # Knowledge base — only if you want MCP / the browse UI
+./deploy.sh --dry-run telegram kb   # optional: check .env and preview the units, change nothing
+./deploy.sh telegram kb             # deploy one or more services
+./deploy.sh all                     # re-deploy every service already installed
 ```
 
-All are idempotent — re-run any time. Each runs `uv sync`, writes its
-`~/.config/systemd/user/<name>.service`, enables boot-start (linger), and starts.
-`deploy-kb.sh` also builds the embedding index first (the model, ~130MB, is
-downloaded once into `KB_INDEX_DIR`) and runs the service with the vault mounted
-read-only.
+Idempotent — re-run any time. It:
+
+1. Asks up front (sudo) whether to cap journald's disk use at 50M and whether to
+   enable lingering so services start at boot — both once per machine.
+2. Runs `uv sync`, then checks each service's config with the app's own settings
+   loader, so a bad `.env` stops the deploy with the same message the service
+   would give.
+3. For `kb`, builds the embedding index (the model, ~130MB, downloads once into
+   `KB_INDEX_DIR`) and sandboxes the service with the vault read-only — or warns
+   and runs unsandboxed if this machine's systemd can't (some distros restrict
+   the user namespaces that needs).
+4. Writes `~/.config/systemd/user/<service>.service`, restarts, and confirms each
+   service stays up, printing its recent logs if it doesn't. A service with a
+   broken config stops after 5 failed starts instead of restarting forever.
 
 ## Manage
 
 ```bash
-systemctl --user status 'rr-second-brain*'                # all at once
-systemctl --user restart rr-second-brain-telegram        # Telegram
-systemctl --user restart rr-second-brain-slack           # Slack
-systemctl --user restart rr-second-brain-kb              # Knowledge base
-journalctl  --user -u    rr-second-brain-kb -f           # live logs (KB)
+systemctl --user status 'rr-second-brain*'               # all at once
+systemctl --user restart rr-second-brain-kb             # one service
+journalctl  --user -u    rr-second-brain-kb -f          # live logs
 ```
 
 ## Update after code changes
 
 ```bash
-git pull && uv sync
-systemctl --user restart rr-second-brain-telegram rr-second-brain-slack rr-second-brain-kb
+git pull && ./deploy.sh all
 ```
 
 ## Uninstall

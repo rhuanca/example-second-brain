@@ -65,8 +65,12 @@ class Settings:
 
         # Resolve to an absolute path now (cwd is the project root at startup) so
         # the vault location never depends on the process's cwd later. Relative
-        # values like "./vault" are intentionally supported for local dev.
-        vault_path = Path(_require(env, "VAULT_PATH")).expanduser().resolve()
+        # values like "./vault" are intentionally supported for local dev. $VARS are
+        # expanded as the knowledge base does (.env files don't), so both processes
+        # always resolve the same vault.
+        vault_path = (
+            Path(os.path.expandvars(_require(env, "VAULT_PATH"))).expanduser().resolve()
+        )
 
         model = env.get("ANTHROPIC_MODEL", "").strip() or DEFAULT_MODEL
         api_key = env.get("ANTHROPIC_API_KEY", "").strip() or None
