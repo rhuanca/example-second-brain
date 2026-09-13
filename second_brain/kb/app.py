@@ -13,8 +13,11 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from typing import Callable
 
+from pathlib import Path
+
 import anyio
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from second_brain.kb.auth import AccessVerifier, McpAuthMiddleware, WebAuthMiddleware
 from second_brain.kb.config import KbSettings
@@ -25,6 +28,8 @@ from second_brain.kb.tools import KbTools
 from second_brain.kb.web import SecurityHeadersMiddleware, build_router
 from second_brain.vault import Vault
 
+STATIC_DIR = Path(__file__).with_name("static")
+
 
 def create_app(
     settings: KbSettings,
@@ -33,6 +38,7 @@ def create_app(
     embedder: Embedder | None = None,
     answer: Callable[..., str] | None = None,
     access_verifier: AccessVerifier | None = None,
+    chat_client=None,
 ) -> FastAPI:
     """Build the service. Collaborators are injectable for tests."""
     if library is None:
@@ -64,7 +70,8 @@ def create_app(
             settings.cf_access_team_domain, settings.cf_access_aud
         )
 
-    app.include_router(build_router(library))
+    app.include_router(build_router(library, settings, chat_client=chat_client))
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     app.mount("/", mcp_app)
     # Each middleware guards its own paths: bearer token for /mcp, Access for the rest.
     app.add_middleware(

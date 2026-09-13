@@ -27,6 +27,9 @@ DEFAULT_EMBED_MODEL = "BAAI/bge-small-en-v1.5"
 # Derived data lives outside the vault so it never pollutes Obsidian or sync.
 DEFAULT_INDEX_DIR = "~/.local/share/second-brain-kb"
 
+CHAT_EFFORTS = ("low", "medium", "high", "xhigh", "max")
+DEFAULT_CHAT_EFFORT = "medium"
+
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 
@@ -51,6 +54,11 @@ class KbSettings:
     cf_access_team_domain: str | None = None
     cf_access_aud: str | None = None
     web_allow_unauthenticated: bool = False
+    # Chat defaults to ANTHROPIC_MODEL, which the collector may have set for
+    # summaries; KB_CHAT_MODEL overrides it for the chat alone.
+    chat_model: str = DEFAULT_MODEL
+    # Medium keeps a conversation responsive; raise it for harder questions.
+    chat_effort: str = DEFAULT_CHAT_EFFORT
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "KbSettings":
@@ -77,10 +85,17 @@ class KbSettings:
                 "KB_CF_ACCESS_TEAM_DOMAIN and KB_CF_ACCESS_AUD must be set together"
             )
 
+        effort = _clean(env.get("KB_CHAT_EFFORT")).lower() or DEFAULT_CHAT_EFFORT
+        if effort not in CHAT_EFFORTS:
+            raise ConfigError(f"KB_CHAT_EFFORT must be one of {', '.join(CHAT_EFFORTS)}")
+        anthropic_model = _clean(env.get("ANTHROPIC_MODEL")) or DEFAULT_MODEL
+
         return cls(
             vault_path=_path(raw_vault),
             anthropic_api_key=_clean(env.get("ANTHROPIC_API_KEY")) or None,
-            anthropic_model=_clean(env.get("ANTHROPIC_MODEL")) or DEFAULT_MODEL,
+            anthropic_model=anthropic_model,
+            chat_model=_clean(env.get("KB_CHAT_MODEL")) or anthropic_model,
+            chat_effort=effort,
             index_dir=_path(_clean(env.get("KB_INDEX_DIR")) or DEFAULT_INDEX_DIR),
             embed_model=_clean(env.get("KB_EMBED_MODEL")) or DEFAULT_EMBED_MODEL,
             host=host,

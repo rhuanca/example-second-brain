@@ -1,6 +1,7 @@
 """The browse UI: topic overview -> note cards -> note -> full source.
 
-Server-rendered HTML and SVG. Every note id in a URL is resolved through
+Server-rendered HTML and SVG; the only script is the chat's own `static/chat.js`
+(no inline scripts, no third-party code). Every note id in a URL is resolved through
 `Library.card()`, so an unknown or crafted id is a 404 and never a file read.
 Captured content is always escaped (Jinja autoescape) and archives are shown as
 plain text, never rendered as Markdown/HTML, because that text came from
@@ -9,17 +10,20 @@ arbitrary web pages. Chart geometry lives in `visuals.py`; templates only draw.
 
 from __future__ import annotations
 
+import json
 from collections import Counter
 from pathlib import Path
 from urllib.parse import urlencode
 
 import frontmatter
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from second_brain.kb.auth import is_mcp_path
+from second_brain.kb.chat import ChatError, gather_notes, parse_turns, stream_answer
+from second_brain.kb.config import KbSettings
 from second_brain.kb.notes import Card
 from second_brain.kb.retrieval import Library
 from second_brain.kb.visuals import (
@@ -42,7 +46,14 @@ TEMPLATES = Jinja2Templates(directory=str(Path(__file__).with_name("templates"))
 UNTOPICED = "none"
 SEARCH_LIMIT = 24
 RECENT = 8
-NAV = [("/", "Library"), ("/notes", "Notes"), ("/map", "Map"), ("/timeline", "Timeline")]
+NAV = [
+    ("/", "Library"),
+    ("/notes", "Notes"),
+    ("/map", "Map"),
+    ("/timeline", "Timeline"),
+    ("/chat", "Chat"),
+]
+MAX_CHAT_BODY = 200_000  # bytes; 20 turns × 4,000 chars fits with room to spare
 
 # Close to the panel's real width on a desktop, so 13px labels render near 13px.
 TREEMAP_W, TREEMAP_H = 1050, 300
@@ -60,6 +71,7 @@ SECURITY_HEADERS = [
     (
         b"content-security-policy",
         b"default-src 'none'; style-src 'unsafe-inline'; "
+        b"script-src 'self'; connect-src 'self'; "
         b"img-src 'self' https://i.ytimg.com; "
         b"form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
     ),
@@ -69,7 +81,9 @@ SECURITY_HEADERS = [
 ]
 
 
-def build_router(library: Library) -> APIRouter:
+def build_router(
+    library: Library, settings: KbSettings | None = None, *, chat_client=None
+) -> APIRouter:
     router = APIRouter()
 
     def render(request: Request, name: str, status_code: int = 200, **context):
@@ -276,6 +290,66 @@ def build_router(library: Library) -> APIRouter:
             undated=sum(1 for c in cards if not month_of(c)),
         )
 
+    @router.get("/chat", response_class=HTMLResponse)
+    def chat_page(request: Request):
+        library.refresh_if_stale()
+        topics = library.topics()
+        suggestions = ["What have I saved recently that's worth revisiting?"]
+        if topics:
+            suggestions.append(f"Summarise what my notes say about {topics[0].name.lower()}.")
+        suggestions.append("Which prototype ideas come up in more than one note?")
+        return render(
+            request,
+            "chat.html",
+            active="/chat",
+            enabled=bool(settings and settings.anthropic_api_key),
+            suggestions=suggestions,
+        )
+
+    @router.post("/api/chat")
+    async def chat_api(request: Request):
+        if not (request.headers.get("content-type") or "").startswith("application/json"):
+            return JSONResponse({"error": "Send JSON."}, status_code=415)
+        origin = request.headers.get("origin")
+        host = request.headers.get("host", "")
+        if origin and origin not in {f"https://{host}", f"http://{host}"}:
+            # The browser attaches the Access cookie to cross-site requests too;
+            # only our own pages may start a chat.
+            return JSONResponse({"error": "Cross-origin requests are not allowed."}, status_code=403)
+        length = request.headers.get("content-length") or "0"
+        if not length.isdigit() or int(length) > MAX_CHAT_BODY:
+            return JSONResponse({"error": "That conversation is too long."}, status_code=413)
+        if not (settings and settings.anthropic_api_key):
+            return JSONResponse(
+                {"error": "Chat needs ANTHROPIC_API_KEY to be set for the knowledge base."},
+                status_code=503,
+            )
+        try:
+            turns = parse_turns(await request.json())
+        except (ChatError, ValueError) as exc:
+            message = str(exc) if isinstance(exc, ChatError) else "Send valid JSON."
+            return JSONResponse({"error": message}, status_code=400)
+
+        def events():
+            library.refresh_if_stale()
+            slots = topic_slots(library.topics())
+            cards = gather_notes(library, turns)
+            for event in stream_answer(
+                turns,
+                cards,
+                library=library,
+                settings=settings,
+                describe=lambda card: _chat_card(card, library, slots),
+                client=chat_client,
+            ):
+                yield json.dumps(event) + "\n"
+
+        return StreamingResponse(
+            events(),
+            media_type="application/x-ndjson",
+            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+        )
+
     @router.get("/search", response_class=HTMLResponse)
     def search(request: Request, q: str = "", topic: str | None = None):
         library.refresh_if_stale()
@@ -363,6 +437,12 @@ def _view(card: Card, library: Library, slots: dict[str, int]) -> dict:
         "key_points": card.key_points,
         "prototype_ideas": card.prototype_ideas,
     }
+
+
+def _chat_card(card: Card, library: Library, slots: dict[str, int]) -> dict:
+    """The small card shown under a chat answer (no body text)."""
+    view = _view(card, library, slots)
+    return {key: view[key] for key in ("id", "title", "date", "thumbnail", "slot", "source_type")}
 
 
 def _treemap(topic_rows: list[dict]) -> dict:

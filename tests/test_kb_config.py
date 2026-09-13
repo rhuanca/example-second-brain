@@ -88,6 +88,28 @@ class KbSettingsTest(unittest.TestCase):
         settings = KbSettings.from_env({"VAULT_PATH": "/tmp/vault", "KB_HOST": "::1"})
         self.assertEqual(settings.host, "::1")
 
+    def test_chat_settings(self):
+        defaults = KbSettings.from_env({"VAULT_PATH": "/tmp/vault"})
+        self.assertEqual((defaults.chat_model, defaults.chat_effort), (DEFAULT_MODEL, "medium"))
+
+        follows = KbSettings.from_env(
+            {"VAULT_PATH": "/tmp/vault", "ANTHROPIC_MODEL": "claude-sonnet-5"}
+        )
+        self.assertEqual(follows.chat_model, "claude-sonnet-5")
+
+        override = KbSettings.from_env(
+            {
+                "VAULT_PATH": "/tmp/vault",
+                "ANTHROPIC_MODEL": "claude-sonnet-5",
+                "KB_CHAT_MODEL": "claude-opus-5",
+                "KB_CHAT_EFFORT": "HIGH",
+            }
+        )
+        self.assertEqual((override.chat_model, override.chat_effort), ("claude-opus-5", "high"))
+
+        with self.assertRaises(ConfigError):
+            KbSettings.from_env({"VAULT_PATH": "/tmp/vault", "KB_CHAT_EFFORT": "turbo"})
+
     def test_access_settings_must_come_as_a_pair(self):
         for env in [
             {"KB_CF_ACCESS_TEAM_DOMAIN": "team.cloudflareaccess.com"},

@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}Chat · Second Brain{% endblock %}
+{% block style %}
+  main { max-width: 860px; }
+  .chat-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+  .btn { font: inherit; font-size: 0.9rem; border-radius: 999px; padding: 6px 14px; cursor: pointer;
+    border: 1px solid var(--grid); background: var(--surface); color: var(--ink); }
+  .btn:hover { border-color: var(--ink-2); }
+  .btn-primary { background: var(--ink); color: var(--page); border-color: var(--ink); }
+  .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
+
+  .chat-log { display: flex; flex-direction: column; gap: 22px; margin: 18px 0 150px; }
+  .msg-user { align-self: flex-end; max-width: 85%; background: var(--surface); box-shadow: 0 0 0 1px var(--ring);
+    border-radius: 14px 14px 4px 14px; padding: 10px 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .msg-assistant { max-width: 100%; overflow-wrap: anywhere; }
+  .msg-assistant p { margin: 0 0 10px; }
+  .msg-assistant ul, .msg-assistant ol { margin: 0 0 10px; padding-left: 1.3em; }
+  .msg-assistant li { margin: 0 0 4px; }
+  .msg-assistant h4 { margin: 14px 0 6px; font-size: 1rem; }
+  .msg-assistant code { background: var(--grid); border-radius: 4px; padding: 0 4px; }
+  .msg-assistant pre { background: var(--surface); box-shadow: 0 0 0 1px var(--ring); border-radius: 8px;
+    padding: 10px 12px; overflow-x: auto; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .cite { display: inline-flex; align-items: center; gap: 4px; font-size: 0.78rem; vertical-align: 1px;
+    padding: 0 7px; border-radius: 999px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--ring);
+    text-decoration: none; color: var(--ink-2); white-space: nowrap; max-width: 16em; overflow: hidden; text-overflow: ellipsis; }
+  .cite:hover { color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink-2); }
+  .thinking { color: var(--muted); font-size: 0.9rem; }
+  .thinking::after { content: "…"; animation: blink 1.2s steps(3, end) infinite; }
+  @keyframes blink { 50% { opacity: 0.3; } }
+  .msg-error { color: var(--ink); background: color-mix(in srgb, #d03b3b 12%, var(--surface));
+    border-left: 3px solid #d03b3b; border-radius: 6px; padding: 8px 12px; font-size: 0.92rem; }
+  .msg-note { color: var(--muted); font-size: 0.85rem; }
+
+  .sources-label { color: var(--muted); font-size: 0.78rem; letter-spacing: 0.05em; text-transform: uppercase; margin: 12px 0 8px; }
+  .sources { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr)); }
+  .src-card { display: flex; align-items: center; gap: 10px; text-decoration: none; background: var(--surface);
+    border-radius: 10px; overflow: hidden; box-shadow: 0 0 0 1px var(--ring); min-width: 0; }
+  .src-card:hover { box-shadow: 0 0 0 1px var(--ink-2); }
+  .src-card .thumb { flex: none; width: 88px; aspect-ratio: 16 / 9; }
+  .src-card .thumb .band { border-top-width: 3px; }
+  .src-card .thumb .band svg { width: 18px; height: 18px; }
+  .src-card .t { padding: 6px 10px 6px 0; font-size: 0.85rem; line-height: 1.3; font-weight: 600; min-width: 0;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .src-card.uncited { opacity: 0.6; }
+
+  .composer { position: fixed; left: 0; right: 0; bottom: 0; background: linear-gradient(transparent, var(--page) 28%);
+    padding: 26px 16px 16px; }
+  .composer form { max-width: 828px; margin: 0 auto; display: flex; gap: 8px; align-items: flex-end;
+    background: var(--raised); border-radius: 16px; box-shadow: 0 0 0 1px var(--grid), 0 6px 24px rgba(0,0,0,0.06); padding: 8px; }
+  .composer textarea { flex: 1; font: inherit; resize: none; border: 0; background: transparent; color: var(--ink);
+    padding: 6px 8px; max-height: 180px; min-height: 40px; }
+  .composer textarea:focus { outline: none; }
+  .suggestions { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 0; }
+  .welcome { color: var(--ink-2); }
+{% endblock %}
+{% block content %}
+<div class="chat-head">
+  <div>
+    <h1>Chat with your notes</h1>
+    <p class="lede" style="margin:0">Answers come from your saved notes and link the ones they use.</p>
+  </div>
+  <button class="btn" type="button" id="new-chat" hidden>New chat</button>
+</div>
+
+{% if enabled %}
+<div id="chat-root" data-max-chars="4000">
+  <div class="chat-log" id="chat-log" aria-live="polite">
+    <div id="welcome" class="welcome">
+      <p>Ask anything about what you've saved. Try one of these:</p>
+      <div class="suggestions">
+        {% for s in suggestions %}<button class="btn suggestion" type="button" data-prompt="{{ s }}">{{ s }}</button>{% endfor %}
+      </div>
+    </div>
+  </div>
+  <div class="composer">
+    <form id="chat-form">
+      <textarea id="chat-input" rows="1" maxlength="4000" placeholder="Ask about your notes…" aria-label="Your question" required></textarea>
+      <button class="btn" type="button" id="stop" hidden>Stop</button>
+      <button class="btn btn-primary" type="submit" id="send">Send</button>
+    </form>
+  </div>
+  <noscript><p class="empty">The chat needs JavaScript. Search works without it.</p></noscript>
+</div>
+{% else %}
+<p class="empty" style="margin-top:20px">Chat is off: it answers with Claude, so it needs <code>ANTHROPIC_API_KEY</code> set for the knowledge base (in <code>.env</code> or the environment), then a restart. Each answer sends the matching note summaries to the Anthropic API; search, the map and browsing stay on this machine.</p>
+{% endif %}
+{% endblock %}
+{% block scripts %}{% if enabled %}<script src="/static/chat.js" defer></script>{% endif %}{% endblock %}
