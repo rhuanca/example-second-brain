@@ -107,6 +107,21 @@ class PagesTest(_Vault):
         # Newest first.
         self.assertLess(html.index("Agent memory"), html.index("RAG evals"))
 
+    def test_home_draws_the_topic_treemap_and_monthly_chart(self):
+        html = self.get("/")
+        self.assertIn('aria-label="Topics sized by number of notes"', html)
+        self.assertIn('class="seg fill-s1"', html)  # the Agents tile, slot 1
+        self.assertIn('aria-label="Notes saved per month"', html)
+        self.assertIn('href="/notes?month=2026-08"', html)
+
+    def test_cards_show_youtube_thumbnails_and_topic_colours(self):
+        html = self.get("/notes")
+        # The fixture's youtu.be/abc is not a valid video id, so no thumbnail;
+        # it falls back to a band in its topic colour.
+        self.assertNotIn("i.ytimg.com", html)
+        self.assertIn('class="band tint-s1"', html)
+        self.assertIn('<span class="swatch bg-s1"></span>Agents', html)
+
     def test_topic_listing(self):
         html = self.get("/notes?topic=agents")
         self.assertIn("Agent memory", html)
@@ -174,9 +189,19 @@ class PagesTest(_Vault):
                 self.assertEqual(response.status_code, 404)
                 self.assertNotIn("SECRET", response.text)
 
+    def test_real_youtube_notes_get_a_thumbnail(self):
+        write_note(
+            self.root, "video", "A video", "about things",
+            source="https://www.youtube.com/watch?v=dQw4w9WgXcQ", tags=("youtube",),
+        )
+        self._client.app.state.library.refresh_if_stale(force=True)
+        html = self.get("/notes/video")
+        self.assertIn('src="https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg"', html)
+
     def test_security_headers(self):
         response = self._client.get("/")
         self.assertIn("default-src 'none'", response.headers["content-security-policy"])
+        self.assertIn("img-src 'self' https://i.ytimg.com", response.headers["content-security-policy"])
         self.assertEqual(response.headers["x-content-type-options"], "nosniff")
         self.assertEqual(response.headers["referrer-policy"], "no-referrer")
 

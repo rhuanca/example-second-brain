@@ -1,15 +1,14 @@
-"""The browse UI: topics -> note cards -> note -> full source.
+"""The browse UI: topic overview -> note cards -> note -> full source.
 
-Server-rendered HTML, no JavaScript. Every note id in a URL is resolved through
+Server-rendered HTML and SVG. Every note id in a URL is resolved through
 `Library.card()`, so an unknown or crafted id is a 404 and never a file read.
 Captured content is always escaped (Jinja autoescape) and archives are shown as
 plain text, never rendered as Markdown/HTML, because that text came from
-arbitrary web pages.
+arbitrary web pages. Chart geometry lives in `visuals.py`; templates only draw.
 """
 
 from __future__ import annotations
 
-import re
 from collections import Counter
 from pathlib import Path
 from urllib.parse import urlencode
@@ -23,19 +22,36 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from second_brain.kb.auth import is_mcp_path
 from second_brain.kb.notes import Card
 from second_brain.kb.retrieval import Library
+from second_brain.kb.visuals import (
+    OTHER,
+    SOURCE_ORDER,
+    Series,
+    month_label,
+    month_of,
+    squarified_treemap,
+    timeline_chart,
+    topic_overlaps,
+    topic_slots,
+    youtube_thumbnail,
+)
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).with_name("templates")))
 
-SOURCE_TYPES = ("youtube", "medium", "pdf", "article")
 UNTOPICED = "none"
-SEARCH_LIMIT = 25
+SEARCH_LIMIT = 24
 RECENT = 8
-_MONTH = re.compile(r"^\d{4}-\d{2}")
+NAV = [("/", "Library"), ("/notes", "Notes")]
+
+# Close to the panel's real width on a desktop, so 13px labels render near 13px.
+TREEMAP_W, TREEMAP_H = 1050, 300
+# Rough width of a 13px label character, to decide whether a name fits its tile.
+_CHAR_W = 7.2
 
 SECURITY_HEADERS = [
     (
         b"content-security-policy",
-        b"default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; "
+        b"default-src 'none'; style-src 'unsafe-inline'; "
+        b"img-src 'self' https://i.ytimg.com; "
         b"form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
     ),
     (b"x-content-type-options", b"nosniff"),
@@ -49,7 +65,10 @@ def build_router(library: Library) -> APIRouter:
 
     def render(request: Request, name: str, status_code: int = 200, **context):
         return TEMPLATES.TemplateResponse(
-            request, name, {"q": "", **context}, status_code=status_code
+            request,
+            name,
+            {"q": "", "nav_items": NAV, "active": "", **context},
+            status_code=status_code,
         )
 
     def not_found(request: Request):
@@ -59,17 +78,42 @@ def build_router(library: Library) -> APIRouter:
     def index(request: Request):
         library.refresh_if_stale()
         cards = library.cards()
-        topics = [
-            {"topic": topic, "count": len(library.notes_in_topic(topic.id))}
-            for topic in library.topics()
+        topics = library.topics()
+        slots = topic_slots(topics)
+        counts = {t.id: len(library.notes_in_topic(t.id)) for t in topics}
+        biggest = max(counts.values(), default=0)
+        by_id = {t.id: _topic_view(t.id, library, slots) for t in topics}
+
+        topic_rows = [
+            {
+                **by_id[t.id],
+                "description": t.description,
+                "count": counts[t.id],
+                "share": round(100 * counts[t.id] / biggest) if biggest else 0,
+            }
+            for t in topics
         ]
         return render(
             request,
             "index.html",
-            topics=topics,
-            untopiced=sum(1 for c in cards if not library.topics_for(c)),
+            active="/",
             total=len(cards),
-            recent=[_view(c, library) for c in sorted(cards, key=_newest_first)[:RECENT]],
+            topics=topic_rows,
+            treemap=_treemap(topic_rows),
+            together=[
+                (by_id[a], by_id[b], n)
+                for a, b, n in topic_overlaps(cards, library.topics_for)
+                if a in by_id and b in by_id
+            ],
+            untopiced=sum(1 for c in cards if not library.topics_for(c)),
+            activity=timeline_chart(
+                cards,
+                [Series("all", "Notes saved", 1)],
+                lambda card: "all",
+                width=520,
+                height=200,
+            ),
+            recent=[_view(c, library, slots) for c in sorted(cards, key=_newest_first)[:RECENT]],
         )
 
     @router.get("/notes", response_class=HTMLResponse)
@@ -81,11 +125,13 @@ def build_router(library: Library) -> APIRouter:
     ):
         library.refresh_if_stale()
         cards = library.cards()
-        heading, description = "All notes", ""
+        slots = topic_slots(library.topics())
+        heading, description, topic_slot = "All notes", "", None
 
         if topic == UNTOPICED:
             cards = [c for c in cards if not library.topics_for(c)]
             heading = "Not in any topic"
+            topic_slot = OTHER
         elif topic:
             match = next((t for t in library.topics() if t.id == topic), None)
             cards = library.notes_in_topic(topic)
@@ -93,29 +139,37 @@ def build_router(library: Library) -> APIRouter:
                 return not_found(request)
             heading = match.name if match else topic
             description = match.description if match else ""
+            topic_slot = slots.get(topic, OTHER)
 
         filters = {"topic": topic, "source": source, "month": month}
         facets = {
             "source": _facet(cards, _source_type, "source", filters),
-            "month": _facet(cards, _month, "month", filters, newest_first=True),
+            "month": _facet(
+                cards, lambda c: month_of(c) or "", "month", filters,
+                newest_first=True, label=lambda m: month_label(m, with_year=True),
+            ),
         }
         if source:
             cards = [c for c in cards if _source_type(c) == source]
         if month:
-            cards = [c for c in cards if _month(c) == month]
+            cards = [c for c in cards if month_of(c) == month]
 
         return render(
             request,
             "cards.html",
+            active="/notes",
             heading=heading,
             description=description,
+            topic_slot=topic_slot,
             facets=facets,
-            cards=[_view(c, library) for c in sorted(cards, key=_newest_first)],
+            empty="No notes match these filters.",
+            cards=[_view(c, library, slots) for c in sorted(cards, key=_newest_first)],
         )
 
     @router.get("/search", response_class=HTMLResponse)
     def search(request: Request, q: str = "", topic: str | None = None):
         library.refresh_if_stale()
+        slots = topic_slots(library.topics())
         hits = library.search(q, topic=topic or None, limit=SEARCH_LIMIT) if q.strip() else []
         return render(
             request,
@@ -123,8 +177,10 @@ def build_router(library: Library) -> APIRouter:
             q=q,
             heading=f"Results for “{q}”" if q.strip() else "Search",
             description="" if q.strip() else "Type a question or a few words above.",
+            topic_slot=None,
             facets={},
-            cards=[_view(hit.card, library) for hit in hits],
+            empty="Nothing matched." if q.strip() else "Results appear here.",
+            cards=[_view(hit.card, library, slots) for hit in hits],
         )
 
     @router.get("/notes/{note_id}", response_class=HTMLResponse)
@@ -136,7 +192,7 @@ def build_router(library: Library) -> APIRouter:
         return render(
             request,
             "note.html",
-            note=_view(card, library),
+            note=_view(card, library, topic_slots(library.topics())),
             has_source=library.archive_text(card.note_id) is not None,
         )
 
@@ -147,13 +203,18 @@ def build_router(library: Library) -> APIRouter:
         text = library.archive_text(note_id) if card else None
         if card is None or text is None:
             return not_found(request)
-        return render(request, "source.html", note=_view(card, library), text=_body(text))
+        return render(
+            request,
+            "source.html",
+            note=_view(card, library, topic_slots(library.topics())),
+            text=_body(text),
+        )
 
     return router
 
 
 class SecurityHeadersMiddleware:
-    """Locks the browse pages down: no scripts, no framing, no referrer leaks."""
+    """Locks the browse pages down: no framing, no referrer leaks, only our own assets."""
 
     def __init__(self, app: ASGIApp):
         self.app = app
@@ -171,8 +232,13 @@ class SecurityHeadersMiddleware:
         await self.app(scope, receive, send_with_headers)
 
 
-def _view(card: Card, library: Library) -> dict:
+def _topic_view(topic_id: str, library: Library, slots: dict[str, int]) -> dict:
     names = {t.id: t.name for t in library.topics()}
+    return {"id": topic_id, "name": names.get(topic_id, topic_id), "slot": slots.get(topic_id, OTHER)}
+
+
+def _view(card: Card, library: Library, slots: dict[str, int]) -> dict:
+    topics = [_topic_view(t, library, slots) for t in library.topics_for(card)]
     return {
         "id": card.note_id,
         "title": card.title,
@@ -181,13 +247,48 @@ def _view(card: Card, library: Library) -> dict:
         "source_url": card.source if _is_web_url(card.source) else "",
         "source_label": card.source,
         "source_type": _source_type(card),
-        "topics": [{"id": t, "name": names.get(t, t)} for t in library.topics_for(card)],
+        "thumbnail": youtube_thumbnail(card.source),
+        "slot": topics[0]["slot"] if topics else OTHER,
+        "topics": topics,
         "key_points": card.key_points,
         "prototype_ideas": card.prototype_ideas,
     }
 
 
-def _facet(cards, key, param, filters, *, newest_first=False) -> list[dict]:
+def _treemap(topic_rows: list[dict]) -> dict:
+    by_id = {row["id"]: row for row in topic_rows}
+    tiles = []
+    for rect in squarified_treemap(
+        [(row["id"], row["count"]) for row in topic_rows], TREEMAP_W, TREEMAP_H
+    ):
+        row = by_id[rect.key]
+        # 2px surface gap between neighbouring tiles.
+        x, y, w, h = rect.x + 1, rect.y + 1, max(rect.w - 2, 0), max(rect.h - 2, 0)
+        fits = w >= 56 and h >= 28
+        label = _fit(row["name"], w - 20) if fits else ""
+        tiles.append(
+            {
+                **row,
+                "x": x,
+                "y": y,
+                "w": w,
+                "h": h,
+                "label": label,
+                "show_count": bool(label) and h >= 48,
+            }
+        )
+    return {"width": TREEMAP_W, "height": TREEMAP_H, "tiles": tiles}
+
+
+def _fit(text: str, width: float) -> str:
+    """Shorten a label to fit `width` (never clip mid-glyph); the full name is in the tooltip."""
+    room = int(width // _CHAR_W)
+    if room < 4:
+        return ""
+    return text if len(text) <= room else text[: room - 1].rstrip() + "…"
+
+
+def _facet(cards, key, param, filters, *, newest_first=False, label=str) -> list[dict]:
     counts = Counter(value for c in cards if (value := key(c)))
     values = sorted(counts, reverse=newest_first)
     options = [
@@ -200,7 +301,7 @@ def _facet(cards, key, param, filters, *, newest_first=False) -> list[dict]:
     ]
     options += [
         {
-            "label": value,
+            "label": label(value),
             "count": counts[value],
             "url": _url({**filters, param: value}),
             "active": filters.get(param) == value,
@@ -216,12 +317,7 @@ def _url(params: dict) -> str:
 
 
 def _source_type(card: Card) -> str:
-    return next((t for t in SOURCE_TYPES if t in card.tags), "article")
-
-
-def _month(card: Card) -> str:
-    match = _MONTH.match(card.date or "")
-    return match.group(0) if match else ""
+    return next((t for t in SOURCE_ORDER if t in card.tags), "article")
 
 
 def _newest_first(card: Card) -> tuple:
@@ -230,7 +326,7 @@ def _newest_first(card: Card) -> tuple:
 
 
 def _date_key(date: str) -> int:
-    digits = re.sub(r"\D", "", date or "")[:8]
+    digits = "".join(ch for ch in (date or "") if ch.isdigit())[:8]
     return int(digits) if len(digits) == 8 else 0
 
 

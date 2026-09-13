@@ -24,6 +24,7 @@ import numpy as np
 from second_brain.kb.embeddings import Embedder, EmbeddingIndex, RefreshStats, refresh
 from second_brain.kb.notes import Card, archive_path, load_cards
 from second_brain.kb.topics import Taxonomy, Topic, load_taxonomy
+from second_brain.kb.visuals import Point, map_layout
 from second_brain.vault import Vault
 
 # bge-small cosines sit in a narrow, high band: on a sample vault unrelated notes
@@ -74,6 +75,8 @@ class Library:
         self._taxonomy = Taxonomy()
         self._topic_key: tuple | None = None
         self._topic_vectors = np.zeros((0, 0), dtype=np.float32)
+        self._version = 0  # bumps whenever the index is replaced
+        self._map_cache: tuple[tuple, list] | None = None
 
     # --- keeping up with the vault -------------------------------------------
 
@@ -104,6 +107,7 @@ class Library:
             self._index = index
             self._cards = {card.note_id: card for card in cards}
             self._signature = signature
+            self._version += 1
             return stats
 
     def _listing_signature(self) -> tuple:
@@ -166,6 +170,23 @@ class Library:
 
     def notes_in_topic(self, topic_id: str) -> list[Card]:
         return [c for c in self.cards() if topic_id in self.topics_for(c)]
+
+    # --- the map ---------------------------------------------------------------
+
+    def map_points(self, width: float, height: float) -> list[Point]:
+        """Every note placed on a 2D map by similarity. Recomputed only when the
+        index changes, not per request."""
+        with self._lock:
+            key = (self._version, width, height)
+            if self._map_cache is None or self._map_cache[0] != key:
+                index = self._index
+                if index is None or not index.note_ids:
+                    points = []
+                else:
+                    points = map_layout(index.note_ids, index.vectors, width, height)
+                points = [p for p in points if p.note_id in self._cards]
+                self._map_cache = (key, points)
+            return list(self._map_cache[1])
 
     # --- search -----------------------------------------------------------------
 

@@ -1,33 +1,68 @@
 {% extends "base.html" %}
-{% from "macros.html" import card_list %}
+{% from "macros.html" import card_grid, column_chart, topic_chip %}
 {% block content %}
 <h1>Your library</h1>
-<p class="lede">{{ total }} note{{ "" if total == 1 else "s" }} · <a href="/notes">browse all</a></p>
+<p class="lede">{{ total }} note{{ "" if total == 1 else "s" }}{% if topics %} across {{ topics | length }} topic{{ "" if topics | length == 1 else "s" }}{% endif %} · <a href="/notes">browse all</a></p>
 
-<h2 class="section">Topics</h2>
-{% if topics %}
-<ul class="tiles">
-  {% for item in topics %}
-  <li class="tile">
-    <a href="/notes?topic={{ item.topic.id | urlencode }}">
-      <div class="tile-head"><span class="tile-name">{{ item.topic.name }}</span><span class="count">{{ item.count }}</span></div>
-      {% if item.topic.description %}<p>{{ item.topic.description }}</p>{% endif %}
-    </a>
-  </li>
-  {% endfor %}
-  {% if untopiced %}
-  <li class="tile">
-    <a href="/notes?topic=none">
-      <div class="tile-head"><span class="tile-name">Not in any topic</span><span class="count">{{ untopiced }}</span></div>
-      <p>Captured since topics were last discovered, or fitting none.</p>
-    </a>
-  </li>
-  {% endif %}
-</ul>
-{% else %}
-<p class="empty">No topics yet. Run <code>scripts/discover_topics.py</code> to group the library.</p>
-{% endif %}
+<section class="panel" aria-labelledby="topics-heading">
+    <div class="section-head"><h2 class="section" id="topics-heading" style="margin-top:0">Topics</h2>{% if topics %}<span class="count">tile size = notes</span>{% endif %}</div>
+    {% if topics %}
+    <div class="treemap-wrap">
+      <svg viewBox="0 0 {{ treemap.width }} {{ treemap.height }}" role="img" aria-label="Topics sized by number of notes" style="display:block;width:100%;height:auto">
+        {% for tile in treemap.tiles %}
+        <a href="/notes?topic={{ tile.id | urlencode }}">
+          <title>{{ tile.name }}: {{ tile.count }} note{{ "" if tile.count == 1 else "s" }}{% if tile.description %} — {{ tile.description }}{% endif %}</title>
+          <rect class="seg fill-s{{ tile.slot }}" x="{{ '%.1f' % tile.x }}" y="{{ '%.1f' % tile.y }}" width="{{ '%.1f' % tile.w }}" height="{{ '%.1f' % tile.h }}" rx="4"/>
+          {% if tile.label %}
+          <text class="tile-label ink-s{{ tile.slot }}" x="{{ '%.1f' % (tile.x + 10) }}" y="{{ '%.1f' % (tile.y + 20) }}">{{ tile.label }}</text>
+          {% if tile.show_count %}<text class="tile-count ink-s{{ tile.slot }}" x="{{ '%.1f' % (tile.x + 10) }}" y="{{ '%.1f' % (tile.y + 38) }}">{{ tile.count }}</text>{% endif %}
+          {% endif %}
+        </a>
+        {% endfor %}
+      </svg>
+    </div>
+    <ul class="topic-list has-treemap">
+      {% for item in topics %}
+      <li class="topic-row">
+        <a href="/notes?topic={{ item.id | urlencode }}">
+          <span class="name"><span class="swatch bg-s{{ item.slot }}"></span>{{ item.name }}</span>
+          <span class="count">{{ item.count }}</span>
+          {% if item.description %}<span class="desc">{{ item.description }}</span>{% endif %}
+          <span class="meter" aria-hidden="true"><span class="bg-s{{ item.slot }}" style="width: {{ item.share }}%"></span></span>
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
+    {% if untopiced %}<p class="count" style="margin:12px 0 0"><a href="/notes?topic=none">{{ untopiced }} note{{ "" if untopiced == 1 else "s" }} not in any topic</a></p>{% endif %}
+    {% else %}
+    <p class="empty">No topics yet. Run <code>scripts/discover_topics.py</code> to group the library into topics; they'll appear here as coloured tiles.</p>
+    {% endif %}
+</section>
 
-<h2 class="section">Recently saved</h2>
-{{ card_list(recent) }}
+<div class="two-col" style="margin-top:16px">
+  <section class="panel" aria-labelledby="activity-heading">
+    <div class="section-head"><h2 class="section" id="activity-heading" style="margin-top:0">Saved per month</h2></div>
+    {% if activity %}
+    {{ column_chart(activity, "Notes saved per month", min_width=false) }}
+    {% else %}
+    <p class="empty">Nothing dated yet.</p>
+    {% endif %}
+  </section>
+
+  <section class="panel" aria-labelledby="together-heading">
+    <div class="section-head"><h2 class="section" id="together-heading" style="margin-top:0">Often together</h2></div>
+    {% if together %}
+    <ul class="together">
+      {% for a, b, n in together %}
+      <li>{{ topic_chip(a) }}<span aria-hidden="true">+</span>{{ topic_chip(b) }}<span class="count">{{ n }} shared</span></li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="count" style="margin:0">Topics that share notes will show up here.</p>
+    {% endif %}
+  </section>
+</div>
+
+<div class="section-head"><h2 class="section">Recently saved</h2><a href="/notes">All notes →</a></div>
+{{ card_grid(recent) }}
 {% endblock %}
