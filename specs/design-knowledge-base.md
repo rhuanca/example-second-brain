@@ -1,6 +1,7 @@
 # Knowledge base service: browse + MCP over the second brain
 
-Status: **design agreed 2026-09-08 — not yet implemented** · Build order: topics → MCP → web UI
+Status: **implemented 2026-09-13** (design agreed 2026-09-08) · Build order: topics → MCP → web UI ·
+See **Implementation notes** at the end for what was decided at build time.
 
 
 ## Context
@@ -363,3 +364,35 @@ Security tests are not optional here, since this is internet-facing:
   pass. Deferred: it touches the collector, which is otherwise untouched.
 - Whether generated topic MOCs in the vault are still wanted once the web UI exists —
   they are the only surface that works in Obsidian on mobile.
+
+## Implementation notes (2026-09-13)
+
+Built in four commits on `feat/kb-service`: retrieval → MCP → web UI → deploy/docs.
+Decisions taken at build time, and where the build differs from the text above:
+
+- **Embedding provider: local fastembed** (`BAAI/bge-small-en-v1.5`, ONNX on CPU,
+  384 dims) on an x86 server. No API key, no note text leaves the box; the model
+  (~65 MB on disk) is downloaded into `KB_INDEX_DIR/models` by `build_index.py`.
+- **What is embedded:** the card — title, TL;DR and key points — not the archive.
+- **Hybrid ranking:** an explicit `topic=` filters. Otherwise the query is compared
+  with each topic's name + description; notes in the (up to two) matching topics
+  rank first and the rest of the vault fills the remaining slots, so a topic match
+  can reorder results but never hide a relevant note. Thresholds were calibrated
+  on a sample vault (unrelated notes 0.53–0.61, the right note 0.73–0.84) and
+  should be re-checked on the real one.
+- **Freshness:** the service re-lists the vault at most every 30 s (names + mtimes)
+  and only re-parses/embeds when that changed; the taxonomy file is re-read then too.
+- **MCP:** SDK v2 (`mcp.server.MCPServer`), stateless streamable HTTP with JSON
+  responses. The SDK's Host check defaults to localhost only, so the public
+  hostname must be listed in `KB_ALLOWED_HOSTS` or tunnel traffic gets 421. Text
+  tools return content only (no duplicate `structuredContent`).
+- **Browser auth at the app:** the `Cf-Access-Jwt-Assertion` is verified (RS256,
+  audience, issuer, expiry, certs from `<team>/cdn-cgi/access/certs`). With Access
+  unconfigured the UI is closed unless `KB_WEB_ALLOW_UNAUTHENTICATED=true`, and that
+  flag cannot override a configured Access check.
+- **Web UI:** one `/notes?topic=&source=&month=` listing covers the three facets
+  instead of separate topic pages. No JavaScript; a strict CSP forbids scripts.
+- **Not done here:** Telegram/Slack `/ask` still use lexical search (the `searcher=`
+  swap is a follow-up — it would make those processes load the ONNX model); the
+  Batch API backfill was unnecessary at ~12k tokens; topic MOCs in the vault were
+  not generated; the tunnel/Access setup is documented in DEPLOY.md, not automated.

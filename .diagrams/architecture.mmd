@@ -16,8 +16,12 @@ flowchart TD
         slack["Slack — DM a question"] --> slackbot["slack_bot.py — ask-only"]
         slackbot --> ask["ask.py — retrieve + answer"]
         kbnotes["kb/notes.py — notes → Cards"] --> kbtopics["kb/topics.py — discover topics"]
-        mcp["kb/mcp_server.py — MCP tools"]:::planned
-        web["kb/web.py — browse UI"]:::planned
+        kbnotes --> retrieval["kb/retrieval.py — index + topic/semantic search"]
+        kbtopics --> retrieval
+        retrieval --> mcp["kb/mcp_server.py — MCP tools"]
+        retrieval --> web["kb/web.py — browse UI"]
+        auth["kb/auth.py — bearer token / Access JWT"] --> mcp
+        auth --> web
     end
 
     obsidian[("Obsidian vault — flat notes + sources/ archives")]
@@ -27,10 +31,11 @@ flowchart TD
     obsidian --> ask
     obsidian --> kbnotes
     kbtopics -.->|"scripts/discover_topics.py --apply"| obsidian
-    kbtopics --> mcp
-    kbtopics --> web
-    mcp --> agents["Claude Code / Codex"]:::planned
-    web --> browser["Browser"]:::planned
+    mcp --> ask
+    mcp --> tunnel{{"Cloudflare Tunnel + Access"}}:::planned
+    web --> tunnel
+    tunnel --> agents["Claude Code / Codex"]
+    tunnel --> browser["Browser"]
 
     summarizer --> claude["Claude API"]
     ask --> claude
@@ -43,6 +48,6 @@ flowchart TD
     classDef focal fill:#fdecc8,stroke:#e0a93f,color:#7a4b00;
     classDef ext fill:#eeeeee,stroke:#bbbbbb,color:#333333;
     classDef planned fill:#ffffff,stroke:#999999,color:#666666,stroke-dasharray: 5 3;
-    class handle focal;
-    class tg,slack,claude,yt,md,web2,web3 ext;
+    class handle,retrieval focal;
+    class tg,slack,claude,yt,md,web2,web3,agents,browser ext;
     class obsidian focal;

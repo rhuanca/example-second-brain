@@ -6,14 +6,16 @@ flowchart LR
     taxonomy -.->|"--apply"| frontmatter["topics: in note frontmatter"]
     frontmatter --> obsidian
 
-    taxonomy --> retrieval["kb/retrieval.py — topic filter<br/>then semantic rank"]:::planned
-    cards --> retrieval
-    retrieval --> mcp["MCP tools<br/>list_topics · search_notes<br/>get_note · get_source · ask"]:::planned
-    retrieval --> web["Browse UI<br/>topics → cards → note"]:::planned
+    cards --> embed["kb/embeddings.py — fastembed<br/>incremental by content hash"]
+    embed --> index[["KB_INDEX_DIR — vectors.npy + manifest"]]
+    taxonomy --> retrieval["kb/retrieval.py — topic match<br/>then semantic rank"]
+    index --> retrieval
+    retrieval --> mcp["MCP tools (bearer token)<br/>list_topics · search_notes<br/>get_note · get_source · ask"]
+    retrieval --> web["Browse UI (Access JWT)<br/>topics → cards → note → source"]
     mcp --> tunnel{{"Cloudflare Tunnel + Access"}}:::planned
     web --> tunnel
-    tunnel --> outside["Claude Code · Codex · browser"]:::planned
+    tunnel --> outside["Claude Code · Codex · browser"]
 
     classDef focal fill:#fdecc8,stroke:#e0a93f,color:#7a4b00;
     classDef planned fill:#ffffff,stroke:#999999,color:#666666,stroke-dasharray: 5 3;
-    class cards,taxonomy focal;
+    class cards,taxonomy,retrieval focal;

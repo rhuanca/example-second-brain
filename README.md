@@ -158,6 +158,35 @@ uv run python -m second_brain.slack_main
 Then DM the bot (under *Apps* in Slack) a question like *"what have I saved about
 agent memory?"*.
 
+## Knowledge base (optional) — MCP for agents, a browse UI for you
+
+A third, read-only process over the same vault. It gives **Claude Code / Codex**
+an MCP server to search your library, and gives you a **web UI** to browse it by
+topic. Search works by meaning: every note's card (title + TL;DR + key points) is
+embedded locally with [fastembed](https://github.com/qdrant/fastembed) (CPU, no
+API, the note text never leaves the machine).
+
+```bash
+# in .env: KB_AUTH_TOKENS=<a long random token>   (see env.example)
+uv run python scripts/build_index.py --apply          # first build; downloads the model once
+uv run python -m second_brain.kb.main                 # http://127.0.0.1:8765
+```
+
+- **MCP** at `/mcp` (bearer token): `list_topics`, `search_notes` (returns cheap
+  cards, never full bodies), `get_note`, `get_source` (full captured text),
+  `ask`. Connect with
+  `claude mcp add --transport http --scope user secondbrain http://127.0.0.1:8765/mcp -H "Authorization: Bearer <token>"`.
+  Captured content is handed to agents fenced as untrusted third-party text.
+- **Browse UI** at `/`: topic tiles → note cards (filter by source and month) →
+  note → full source. It is closed until Cloudflare Access is configured; for
+  local use set `KB_WEB_ALLOW_UNAUTHENTICATED=true` and reach it over SSH.
+- **Topics** come from `scripts/discover_topics.py` (see "Knowledge" below); until
+  it has run, everything still works and notes show as "not in any topic".
+- New captures are picked up automatically (the index updates only what changed).
+
+Deploying it, and reaching it from outside through Cloudflare Tunnel + Access, is
+in [DEPLOY.md](DEPLOY.md).
+
 ## Architecture
 
 Two planes that meet at the vault. The **capture plane** writes: Telegram in, a
@@ -168,7 +197,7 @@ can never be broken by a reader being down.
 Every fetcher returns the same `Article`, so the pipeline is source-agnostic —
 adding a source is a new module plus one line in `sources.py`.
 
-Dashed nodes are designed but not built (see `specs/design-knowledge-base.md`).
+The dashed tunnel is configuration you set up by following DEPLOY.md, not code.
 
 ```mermaid
 flowchart TD
@@ -189,8 +218,12 @@ flowchart TD
         slack["Slack — DM a question"] --> slackbot["slack_bot.py — ask-only"]
         slackbot --> ask["ask.py — retrieve + answer"]
         kbnotes["kb/notes.py — notes → Cards"] --> kbtopics["kb/topics.py — discover topics"]
-        mcp["kb/mcp_server.py — MCP tools"]:::planned
-        web["kb/web.py — browse UI"]:::planned
+        kbnotes --> retrieval["kb/retrieval.py — index + topic/semantic search"]
+        kbtopics --> retrieval
+        retrieval --> mcp["kb/mcp_server.py — MCP tools"]
+        retrieval --> web["kb/web.py — browse UI"]
+        auth["kb/auth.py — bearer token / Access JWT"] --> mcp
+        auth --> web
     end
 
     obsidian[("Obsidian vault — flat notes + sources/ archives")]
@@ -200,10 +233,11 @@ flowchart TD
     obsidian --> ask
     obsidian --> kbnotes
     kbtopics -.->|"scripts/discover_topics.py --apply"| obsidian
-    kbtopics --> mcp
-    kbtopics --> web
-    mcp --> agents["Claude Code / Codex"]:::planned
-    web --> browser["Browser"]:::planned
+    mcp --> ask
+    mcp --> tunnel{{"Cloudflare Tunnel + Access"}}:::planned
+    web --> tunnel
+    tunnel --> agents["Claude Code / Codex"]
+    tunnel --> browser["Browser"]
 
     summarizer --> claude["Claude API"]
     ask --> claude
@@ -216,8 +250,8 @@ flowchart TD
     classDef focal fill:#fdecc8,stroke:#e0a93f,color:#7a4b00;
     classDef ext fill:#eeeeee,stroke:#bbbbbb,color:#333333;
     classDef planned fill:#ffffff,stroke:#999999,color:#666666,stroke-dasharray: 5 3;
-    class handle focal;
-    class tg,slack,claude,yt,md,web2,web3 ext;
+    class handle,retrieval focal;
+    class tg,slack,claude,yt,md,web2,web3,agents,browser ext;
     class obsidian focal;
 ```
 
@@ -264,6 +298,11 @@ Everything downstream trades on the same idea: send **cards** (title + TL;DR,
 ~100 tokens), fetch a full note or its archive only once a card proves relevant.
 Ten cards is ~1k tokens where ten archives would be ~47k.
 
+Search embeds each card locally (fastembed, 384-dim vectors in a numpy file
+outside the vault, re-embedding only notes whose card changed). A query first
+looks for the topics it resembles and ranks their notes first, then fills the
+remaining slots from the whole vault; with no topics it is a plain ranking.
+
 ```mermaid
 flowchart LR
     obsidian[("Obsidian vault<br/>flat notes + sources/ archives")] --> load["ask.load_notes — frontmatter + body"]
@@ -273,17 +312,19 @@ flowchart LR
     taxonomy -.->|"--apply"| frontmatter["topics: in note frontmatter"]
     frontmatter --> obsidian
 
-    taxonomy --> retrieval["kb/retrieval.py — topic filter<br/>then semantic rank"]:::planned
-    cards --> retrieval
-    retrieval --> mcp["MCP tools<br/>list_topics · search_notes<br/>get_note · get_source · ask"]:::planned
-    retrieval --> web["Browse UI<br/>topics → cards → note"]:::planned
+    cards --> embed["kb/embeddings.py — fastembed<br/>incremental by content hash"]
+    embed --> index[["KB_INDEX_DIR — vectors.npy + manifest"]]
+    taxonomy --> retrieval["kb/retrieval.py — topic match<br/>then semantic rank"]
+    index --> retrieval
+    retrieval --> mcp["MCP tools (bearer token)<br/>list_topics · search_notes<br/>get_note · get_source · ask"]
+    retrieval --> web["Browse UI (Access JWT)<br/>topics → cards → note → source"]
     mcp --> tunnel{{"Cloudflare Tunnel + Access"}}:::planned
     web --> tunnel
-    tunnel --> outside["Claude Code · Codex · browser"]:::planned
+    tunnel --> outside["Claude Code · Codex · browser"]
 
     classDef focal fill:#fdecc8,stroke:#e0a93f,color:#7a4b00;
     classDef planned fill:#ffffff,stroke:#999999,color:#666666,stroke-dasharray: 5 3;
-    class cards,taxonomy focal;
+    class cards,taxonomy,retrieval focal;
 ```
 
 ### Processes and storage
@@ -292,12 +333,15 @@ flowchart LR
 |---|---|
 | `main.py` → `rr-second-brain-telegram` | Capture. The only writer. |
 | `slack_main.py` → `rr-second-brain-slack` | Ask-only. A link here gets a nudge to use Telegram. |
+| `kb/main.py` → `rr-second-brain-kb` | MCP + browse UI on `127.0.0.1:8765`. Reads the vault (mounted read-only), writes only its index. |
 | Obsidian vault | Source of truth. Flat `*.md` + `sources/*.source.md` archives. |
 | `second_brain/kb/topics.json` | The taxonomy, versioned in git so drift is visible. |
-| `scripts/*.py` | User-run maintenance (dedupe, flatten, discover topics). Dry-run by default. |
+| `KB_INDEX_DIR` | Embedding vectors + manifest + the downloaded model. Derived, rebuildable, outside the vault. |
+| `scripts/*.py` | User-run maintenance (dedupe, flatten, discover topics, build index). Dry-run by default. |
 
 No database. At ~75 notes growing ~35/month, the corpus is ~26k words of notes
-and ~233k of archives — it loads into memory in milliseconds.
+and ~233k of archives — it loads into memory in milliseconds, and the embedding
+matrix for 1,300 notes would be ~2 MB.
 
 > Diagram sources live in `.diagrams/` as Mermaid (`.mmd`) — the same content as
 > the blocks above, ready to paste into an Obsidian note. The `.png`/`.svg`
@@ -306,8 +350,11 @@ and ~233k of archives — it loads into memory in milliseconds.
 ## Roadmap
 
 - **Ask your second brain — done (lexical):** `/ask` searches notes by keyword and
-  answers with Claude. Next: upgrade retrieval to semantic search if keyword
-  matching starts missing things.
+  answers with Claude. The knowledge base already has semantic search; next is
+  letting Telegram/Slack `/ask` use it too (a `searcher=` swap in `ask()`).
+- **Knowledge base — done:** MCP server + browse UI over the vault. Next: run
+  topic discovery on the real vault, recalibrate the search thresholds against it,
+  and set up the Cloudflare Tunnel.
 - **Resurfacing:** a weekly digest or `/spark` command to resurface saved notes so
   the library doesn't go stale.
 - **Cloud:** the bot is env-driven, so hosting it on an always-on server is a later,
@@ -320,6 +367,7 @@ and ~233k of archives — it loads into memory in milliseconds.
 - `second_brain/fetcher.py` — article extraction (trafilatura)
 - `second_brain/youtube.py` — YouTube detection + transcript fetch
 - `second_brain/medium.py` — Medium detection + cookie-authenticated fetch
+- `second_brain/jina.py` — web articles as Markdown with image captions (Jina Reader)
 - `second_brain/sources.py` — routes a URL to the article / YouTube / Medium fetcher
 - `second_brain/summarizer.py` — Claude summary → structured `Summary`
 - `second_brain/vault.py` — note rendering, flat write + dedup
@@ -328,4 +376,12 @@ and ~233k of archives — it loads into memory in milliseconds.
 - `second_brain/slack_bot.py` — Slack adapter (desk-side `ask`)
 - `second_brain/main.py` — Telegram entry point (long-polling)
 - `second_brain/slack_main.py` — Slack entry point (Socket Mode)
+- `second_brain/kb/` — knowledge base, read-only over the vault:
+  - `config.py` — its own narrow settings (no Telegram credentials)
+  - `notes.py` — notes → cards; `topics.py` — topic discovery
+  - `embeddings.py` — local embedding index; `retrieval.py` — `Library`: search + safe id lookups
+  - `tools.py` — the five tools; `mcp_server.py` — MCP over streamable HTTP
+  - `web.py` + `templates/` — browse UI; `auth.py` — bearer token / Access JWT
+  - `app.py` — one FastAPI app for both; `main.py` — entry point
+- `scripts/` — maintenance: `dedupe_vault.py`, `flatten_vault.py`, `discover_topics.py`, `build_index.py`
 - `specs/` — the spec, plan, and task breakdown (spec-driven development)
