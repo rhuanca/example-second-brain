@@ -1,3 +1,4 @@
+import os
 import unittest
 from pathlib import Path
 
@@ -99,6 +100,19 @@ class KbSettingsTest(unittest.TestCase):
         for port in ["abc", "0", "70000"]:
             with self.subTest(port=port), self.assertRaises(ConfigError):
                 KbSettings.from_env({"VAULT_PATH": "/tmp/vault", "KB_PORT": port})
+
+    def test_expands_environment_variables_in_paths(self):
+        os.environ["KB_TEST_BASE"] = "/tmp/kb-base"
+        self.addCleanup(os.environ.pop, "KB_TEST_BASE")
+        settings = KbSettings.from_env(
+            {
+                "VAULT_PATH": "$KB_TEST_BASE/vault",
+                "KB_INDEX_DIR": "${KB_TEST_BASE}/.kb-index",
+            }
+        )
+        self.assertEqual(settings.vault_path, Path("/tmp/kb-base/vault").resolve())
+        self.assertEqual(settings.index_dir, Path("/tmp/kb-base/.kb-index").resolve())
+        self.assertNotIn("$", str(settings.index_dir))
 
     def test_expands_user_and_resolves(self):
         settings = KbSettings.from_env({"VAULT_PATH": "~/vault"})

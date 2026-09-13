@@ -78,12 +78,10 @@ class KbSettings:
             )
 
         return cls(
-            vault_path=Path(raw_vault).expanduser().resolve(),
+            vault_path=_path(raw_vault),
             anthropic_api_key=_clean(env.get("ANTHROPIC_API_KEY")) or None,
             anthropic_model=_clean(env.get("ANTHROPIC_MODEL")) or DEFAULT_MODEL,
-            index_dir=Path(_clean(env.get("KB_INDEX_DIR")) or DEFAULT_INDEX_DIR)
-            .expanduser()
-            .resolve(),
+            index_dir=_path(_clean(env.get("KB_INDEX_DIR")) or DEFAULT_INDEX_DIR),
             embed_model=_clean(env.get("KB_EMBED_MODEL")) or DEFAULT_EMBED_MODEL,
             host=host,
             port=_port(env.get("KB_PORT")),
@@ -97,6 +95,12 @@ class KbSettings:
 
 def _clean(value: str | None) -> str:
     return (value or "").strip()
+
+
+def _path(value: str) -> Path:
+    # .env files don't expand variables, so `$PWD/.kb-index` would otherwise
+    # become a directory literally named "$PWD".
+    return Path(os.path.expandvars(value)).expanduser().resolve()
 
 
 def _csv(value: str | None) -> tuple[str, ...]:
