@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Map · Second Brain{% endblock %}
+{% block style %}
+  .map-dot { stroke: var(--surface); stroke-width: 2; }
+  .map-dot.neutral { fill: var(--muted); }
+  .map-dot.dim { fill: var(--axis); }
+  .map-hit { fill: transparent; }
+  a:hover > .map-dot, a:focus-visible > .map-dot { stroke: var(--ink); }
+  .map-label { fill: var(--ink); font-size: 13px; font-weight: 600; pointer-events: none;
+    paint-order: stroke; stroke: var(--surface); stroke-width: 4px; stroke-linejoin: round; }
+  .map-canvas { background: var(--surface); }
+{% endblock %}
+{% block content %}
+<h1>Map of your notes</h1>
+<p class="lede">Notes about similar things sit close together. Hover a dot for its title, click to open it.</p>
+
+{% if pickers %}
+<div class="facets" aria-label="Highlight a topic">
+  <span class="facets-label">Topic</span>
+  <a class="chip" href="/map"{% if not topic %} aria-current="true"{% endif %}>All</a>
+  {% for p in pickers %}
+  <a class="chip" href="{{ p.url }}"{% if p.active %} aria-current="true"{% endif %}><span class="swatch bg-s{{ p.slot }}"></span>{{ p.name }}</a>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if dots %}
+<section class="panel">
+  {% if topic %}
+  <p class="count" style="margin:0 0 10px"><span class="swatch bg-s{{ topic.slot }}" style="display:inline-block;vertical-align:0"></span> {{ topic.name }}: {{ topic.count }} of {{ note_count }} notes · <a href="/notes?topic={{ topic.id | urlencode }}">list them</a></p>
+  {% elif legend %}
+  <ul class="legend">{% for t in legend %}<li><span class="swatch bg-s{{ t.slot }}"></span>{{ t.name }}</li>{% endfor %}<li><span class="swatch bg-s0"></span>Not in a topic</li></ul>
+  {% endif %}
+  <div class="chart-scroll">
+    <svg class="chart-min map-canvas" viewBox="0 0 {{ width }} {{ height }}" role="img" aria-label="Map of {{ note_count }} notes placed by similarity">
+      {% for dot in dots %}
+      <a href="/notes/{{ dot.id | urlencode }}">
+        <title>{{ dot.title }}</title>
+        <circle class="map-hit" cx="{{ '%.1f' % dot.x }}" cy="{{ '%.1f' % dot.y }}" r="11"/>
+        <circle class="map-dot {% if dot.slot is not none %}fill-s{{ dot.slot }}{% elif dot.dim %}dim{% else %}neutral{% endif %}" cx="{{ '%.1f' % dot.x }}" cy="{{ '%.1f' % dot.y }}" r="{{ 6 if dot.slot is not none else 5 }}"/>
+      </a>
+      {% endfor %}
+      {% for label in labels %}
+      <text class="map-label" x="{{ '%.1f' % label.x }}" y="{{ '%.1f' % (label.y - 12) }}" text-anchor="middle">{{ label.name }}</text>
+      {% endfor %}
+    </svg>
+  </div>
+</section>
+{% elif note_count %}
+<p class="empty">The map appears once the search index has been built — reload in a moment, or run <code>scripts/build_index.py --apply</code>.</p>
+{% else %}
+<p class="empty">No notes yet.</p>
+{% endif %}
+{% endblock %}

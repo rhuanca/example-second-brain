@@ -26,8 +26,10 @@ from second_brain.kb.visuals import (
     OTHER,
     SOURCE_ORDER,
     Series,
+    label_positions,
     month_label,
     month_of,
+    source_slots,
     squarified_treemap,
     timeline_chart,
     topic_overlaps,
@@ -40,10 +42,17 @@ TEMPLATES = Jinja2Templates(directory=str(Path(__file__).with_name("templates"))
 UNTOPICED = "none"
 SEARCH_LIMIT = 24
 RECENT = 8
-NAV = [("/", "Library"), ("/notes", "Notes")]
+NAV = [("/", "Library"), ("/notes", "Notes"), ("/map", "Map"), ("/timeline", "Timeline")]
 
 # Close to the panel's real width on a desktop, so 13px labels render near 13px.
 TREEMAP_W, TREEMAP_H = 1050, 300
+MAP_W, MAP_H = 1050, 620
+TIMELINE_W, TIMELINE_H = 1050, 320
+OTHER_KEY = "__other"
+# A scatter only keeps colours distinguishable for a few series at once, so the
+# map colours every topic only when there are this many or fewer; otherwise it
+# highlights one topic at a time.
+MAP_COLOUR_ALL_MAX = 3
 # Rough width of a 13px label character, to decide whether a name fits its tile.
 _CHAR_W = 7.2
 
@@ -164,6 +173,107 @@ def build_router(library: Library) -> APIRouter:
             facets=facets,
             empty="No notes match these filters.",
             cards=[_view(c, library, slots) for c in sorted(cards, key=_newest_first)],
+        )
+
+    @router.get("/map", response_class=HTMLResponse)
+    def map_page(request: Request, topic: str | None = None):
+        library.refresh_if_stale()
+        topics = library.topics()
+        slots = topic_slots(topics)
+        cards = {c.note_id: c for c in library.cards()}
+        known = {t.id for t in topics}
+        if topic and topic not in known:
+            return not_found(request)
+        colour_all = not topic and 2 <= len(topics) <= MAP_COLOUR_ALL_MAX
+
+        dots, groups = [], {t.id: [] for t in topics}
+        for point in library.map_points(MAP_W, MAP_H):
+            card = cards.get(point.note_id)
+            if card is None:
+                continue
+            ids = library.topics_for(card)
+            for tid in ids:
+                if tid in groups:
+                    groups[tid].append(point)
+            highlighted = bool(topic) and topic in ids
+            if highlighted:
+                slot = slots[topic]
+            elif colour_all:
+                slot = slots.get(ids[0], OTHER) if ids else OTHER
+            else:
+                slot = None
+            dots.append(
+                {
+                    "id": card.note_id,
+                    "title": card.title,
+                    "x": point.x,
+                    "y": point.y,
+                    "slot": slot,
+                    "dim": bool(topic) and not highlighted,
+                }
+            )
+        # Highlighted dots are drawn last so they sit on top.
+        dots.sort(key=lambda d: (d["slot"] is not None, not d["dim"]))
+
+        wanted = {topic: groups[topic]} if topic else groups
+        labels = [
+            {"name": next(t.name for t in topics if t.id == tid), "x": x, "y": y}
+            for tid, (x, y) in label_positions(wanted).items()
+        ]
+        return render(
+            request,
+            "map.html",
+            active="/map",
+            width=MAP_W,
+            height=MAP_H,
+            dots=dots,
+            labels=labels,
+            note_count=len(cards),
+            topic=next((_topic_view(t.id, library, slots) | {"count": len(groups[t.id])}
+                        for t in topics if t.id == topic), None),
+            legend=[_topic_view(t.id, library, slots) for t in topics] if colour_all else [],
+            pickers=[
+                {**_topic_view(t.id, library, slots), "active": t.id == topic,
+                 "url": f"/map?{urlencode({'topic': t.id})}"}
+                for t in topics
+            ],
+        )
+
+    @router.get("/timeline", response_class=HTMLResponse)
+    def timeline(request: Request, by: str = "topic"):
+        library.refresh_if_stale()
+        by = "source" if by == "source" else "topic"
+        cards = library.cards()
+        topics = library.topics()
+        slots = topic_slots(topics)
+
+        if by == "source":
+            series = [
+                Series(source, source.capitalize(), slot, {"source": source})
+                for source, slot in source_slots().items()
+            ]
+            series_of = _source_type
+        else:
+            series = [
+                Series(t.id, t.name, slots[t.id], {"topic": t.id})
+                for t in topics
+                if slots[t.id] != OTHER
+            ]
+            series.append(Series(OTHER_KEY, "Other topics / none" if topics else "No topic", OTHER))
+
+            def series_of(card: Card) -> str:
+                ids = library.topics_for(card)
+                return ids[0] if ids and slots.get(ids[0], OTHER) != OTHER else OTHER_KEY
+
+        chart = timeline_chart(cards, series, series_of, width=TIMELINE_W, height=TIMELINE_H)
+        return render(
+            request,
+            "timeline.html",
+            active="/timeline",
+            by=by,
+            chart=chart,
+            total=len(cards),
+            undated=sum(1 for c in cards if not month_of(c)),
         )
 
     @router.get("/search", response_class=HTMLResponse)

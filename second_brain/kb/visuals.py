@@ -356,22 +356,49 @@ def map_layout(
     used = (hi - lo) * scale
     offset = np.array([(width - used[0]) / 2, (height - used[1]) / 2])
     placed = (coords - lo) * scale + offset
-    return [
+    points = [
         Point(note_id, float(x), float(height - y))  # SVG y grows downward
         for note_id, (x, y) in zip(note_ids, placed)
     ]
+    return _spread_overlaps(points, width, height)
+
+
+def _spread_overlaps(points: list[Point], width: float, height: float, *, gap: float = 9.0) -> list[Point]:
+    """Nudge dots that land on (almost) the same spot onto a small spiral around it.
+
+    Near-identical notes embed to the same place; without this, one dot hides the
+    others and they can't be hovered or clicked. Deterministic: input order decides.
+    """
+    taken: list[Point] = []
+    for point in points:
+        x, y, turn = point.x, point.y, 0
+        while any(abs(x - q.x) < gap and abs(y - q.y) < gap for q in taken) and turn < 60:
+            turn += 1
+            angle = turn * 2.4  # golden-angle steps spread evenly
+            radius = gap * math.sqrt(turn)
+            x = min(max(point.x + radius * math.cos(angle), 0.0), width)
+            y = min(max(point.y + radius * math.sin(angle), 0.0), height)
+        taken.append(Point(point.note_id, x, y))
+    return taken
 
 
 def label_positions(
     groups: dict[str, list[Point]], *, min_dx: float = 70.0, min_dy: float = 16.0
 ) -> dict[str, tuple[float, float]]:
-    """A label at each group's centroid, biggest groups first, skipping ones that collide."""
+    """A label for each group, biggest groups first, skipping ones that would collide.
+
+    Anchored on the group's medoid -- its most central actual note -- rather than
+    the centroid, which for a spread-out topic can fall in empty space and point
+    at dots that belong to something else.
+    """
     placed: dict[str, tuple[float, float]] = {}
     for key, points in sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0])):
         if not points:
             continue
         cx = sum(p.x for p in points) / len(points)
         cy = sum(p.y for p in points) / len(points)
-        if all(abs(cx - x) > min_dx or abs(cy - y) > min_dy for x, y in placed.values()):
-            placed[key] = (cx, cy)
+        medoid = min(points, key=lambda p: (p.x - cx) ** 2 + (p.y - cy) ** 2)
+        mx, my = medoid.x, medoid.y
+        if all(abs(mx - x) > min_dx or abs(my - y) > min_dy for x, y in placed.values()):
+            placed[key] = (mx, my)
     return placed

@@ -122,6 +122,51 @@ class PagesTest(_Vault):
         self.assertIn('class="band tint-s1"', html)
         self.assertIn('<span class="swatch bg-s1"></span>Agents', html)
 
+    def test_map_links_every_note_and_nothing_else(self):
+        html = self.get("/map")
+        for note_id in ["memory", "rag", "xss"]:
+            self.assertIn(f'href="/notes/{note_id}"', html)
+        self.assertEqual(html.count('class="map-hit"'), 3)
+        # Titles in tooltips are escaped like everywhere else.
+        self.assertIn("<title>&lt;script&gt;alert(1)&lt;/script&gt; tricky title</title>", html)
+        self.assertNotIn("<script>", html)
+
+    def test_map_highlights_one_topic(self):
+        html = self.get("/map?topic=agents")
+        self.assertIn("map-dot fill-s1", html)
+        self.assertEqual(html.count("map-dot dim"), 2)
+        self.assertIn("1 of 3 notes", html)
+        self.get("/map?topic=nope", status=404)
+
+    def test_map_colours_every_topic_when_there_are_few(self):
+        self.taxonomy = Taxonomy(
+            topics=[
+                Topic("agents", "Agents", "", ["memory"]),
+                Topic("evals", "Evals", "", ["rag"]),
+            ]
+        )
+        self._client.app.state.library.refresh_if_stale(force=True)
+        html = self.get("/map")
+        self.assertIn("map-dot fill-s1", html)
+        self.assertIn("map-dot fill-s2", html)
+        self.assertIn("map-dot fill-s0", html)  # the untopiced note
+        self.assertIn('<ul class="legend">', html)
+
+    def test_timeline_by_topic_and_by_source(self):
+        by_topic = self.get("/timeline")
+        self.assertIn('aria-label="Notes saved per month, stacked by topic"', by_topic)
+        self.assertIn('href="/notes?topic=agents&amp;month=2026-08"', by_topic)
+        self.assertIn("Show as a table", by_topic)
+
+        by_source = self.get("/timeline?by=source")
+        self.assertIn('href="/notes?source=youtube&amp;month=2026-08"', by_source)
+        self.assertIn("<th>Youtube</th>", by_source)
+        # Anything unexpected falls back to topics rather than erroring.
+        self.assertIn("stacked by topic", self.get("/timeline?by=%3Cscript%3E"))
+
+    def test_nav_marks_the_current_page(self):
+        self.assertIn('<a href="/map" aria-current="page">Map</a>', self.get("/map"))
+
     def test_topic_listing(self):
         html = self.get("/notes?topic=agents")
         self.assertIn("Agent memory", html)

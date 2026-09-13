@@ -162,6 +162,20 @@ class MapTest(unittest.TestCase):
         two = map_layout(["x", "y"], np.eye(2), 100, 100)
         self.assertEqual(len(two), 2)
 
+    def test_identical_notes_do_not_hide_each_other(self):
+        vectors = np.vstack([np.ones((4, 8)), np.zeros((1, 8))])
+        points = map_layout(["a", "b", "c", "d", "e"], vectors, 800, 500)
+        for i, p in enumerate(points):
+            for q in points[i + 1 :]:
+                self.assertTrue(abs(p.x - q.x) >= 9 or abs(p.y - q.y) >= 9, (p, q))
+
+    def test_label_sits_on_a_real_note(self):
+        from second_brain.kb.visuals import Point
+
+        ring = [Point("1", 0, 0), Point("2", 200, 0), Point("3", 100, 10)]
+        (position,) = label_positions({"t": ring}).values()
+        self.assertEqual(position, (100, 10))
+
     def test_labels_skip_collisions(self):
         from second_brain.kb.visuals import Point
 

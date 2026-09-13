@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% from "macros.html" import column_chart %}
+{% block title %}Timeline · Second Brain{% endblock %}
+{% block content %}
+<h1>Timeline</h1>
+<p class="lede">Notes saved each month{% if by == "topic" %}, coloured by each note's main topic{% else %}, by where they came from{% endif %}. Click a bar to see those notes.</p>
+
+<div class="facets" aria-label="Group by">
+  <span class="facets-label">Group by</span>
+  <a class="chip" href="/timeline?by=topic"{% if by == "topic" %} aria-current="true"{% endif %}>Topic</a>
+  <a class="chip" href="/timeline?by=source"{% if by == "source" %} aria-current="true"{% endif %}>Source</a>
+</div>
+
+{% if chart %}
+<section class="panel">
+  {% if chart.series | length > 1 %}
+  <ul class="legend">{% for s in chart.series %}<li><span class="swatch bg-s{{ s.slot }}"></span>{{ s.label }}</li>{% endfor %}</ul>
+  {% endif %}
+  {{ column_chart(chart, "Notes saved per month, stacked by " ~ by) }}
+  <details class="table-view">
+    <summary>Show as a table</summary>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Month</th>{% for s in chart.series %}<th>{{ s.label }}</th>{% endfor %}<th>Total</th></tr></thead>
+        <tbody>
+          {% for month, counts, total in chart.table %}
+          <tr><td>{{ month }}</td>{% for s in chart.series %}<td>{{ counts[s.key] }}</td>{% endfor %}<td>{{ total }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </details>
+</section>
+{% if undated %}<p class="count">{{ undated }} note{{ "" if undated == 1 else "s" }} without a date {{ "is" if undated == 1 else "are" }} not shown.</p>{% endif %}
+{% else %}
+<p class="empty">No dated notes yet.</p>
+{% endif %}
+{% endblock %}
