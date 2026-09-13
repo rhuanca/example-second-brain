@@ -16,6 +16,10 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 
+# Knowledge-base embedding index + downloaded model, when KB_INDEX_DIR points
+# inside the project (derived data, rebuildable, and it indexes your notes).
+/.kb-index/
+
 # Generated diagram renders (keep the .mmd sources)
 .diagrams/*.svg
 .diagrams/*.png
