@@ -113,7 +113,16 @@ class McpAppTest(unittest.TestCase):
         self.assertEqual(response.status_code, 421)
 
     def test_no_api_docs_are_published(self):
-        with TestClient(self.app) as client:
+        # Web auth is opened here so a 404 proves the pages don't exist at all.
+        settings = KbSettings.from_env(
+            {
+                "VAULT_PATH": str(self.root),
+                "KB_INDEX_DIR": str(self.settings.index_dir),
+                "KB_AUTH_TOKENS": TOKEN,
+                "KB_WEB_ALLOW_UNAUTHENTICATED": "true",
+            }
+        )
+        with TestClient(create_app(settings, embedder=FakeEmbedder())) as client:
             for path in ["/docs", "/redoc", "/openapi.json"]:
                 with self.subTest(path=path):
                     self.assertEqual(client.get(path).status_code, 404)

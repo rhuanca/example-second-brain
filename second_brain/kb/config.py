@@ -69,6 +69,14 @@ class KbSettings:
             # to the LAN and bypass the edge authentication entirely.
             raise ConfigError(f"KB_HOST must be a loopback address, got {host!r}")
 
+        team_domain = _clean(env.get("KB_CF_ACCESS_TEAM_DOMAIN")) or None
+        audience = _clean(env.get("KB_CF_ACCESS_AUD")) or None
+        if bool(team_domain) != bool(audience):
+            # Half a configuration would silently leave the browse UI closed.
+            raise ConfigError(
+                "KB_CF_ACCESS_TEAM_DOMAIN and KB_CF_ACCESS_AUD must be set together"
+            )
+
         return cls(
             vault_path=Path(raw_vault).expanduser().resolve(),
             anthropic_api_key=_clean(env.get("ANTHROPIC_API_KEY")) or None,
@@ -81,8 +89,8 @@ class KbSettings:
             port=_port(env.get("KB_PORT")),
             auth_tokens=_csv(env.get("KB_AUTH_TOKENS")),
             allowed_hosts=_csv(env.get("KB_ALLOWED_HOSTS")),
-            cf_access_team_domain=_clean(env.get("KB_CF_ACCESS_TEAM_DOMAIN")) or None,
-            cf_access_aud=_clean(env.get("KB_CF_ACCESS_AUD")) or None,
+            cf_access_team_domain=team_domain,
+            cf_access_aud=audience,
             web_allow_unauthenticated=_bool(env.get("KB_WEB_ALLOW_UNAUTHENTICATED")),
         )
 

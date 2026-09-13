@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% from "macros.html" import card_list %}
+{% block content %}
+<h1>Your library</h1>
+<p class="lede">{{ total }} note{{ "" if total == 1 else "s" }} · <a href="/notes">browse all</a></p>
+
+<h2 class="section">Topics</h2>
+{% if topics %}
+<ul class="tiles">
+  {% for item in topics %}
+  <li class="tile">
+    <a href="/notes?topic={{ item.topic.id | urlencode }}">
+      <div class="tile-head"><span class="tile-name">{{ item.topic.name }}</span><span class="count">{{ item.count }}</span></div>
+      {% if item.topic.description %}<p>{{ item.topic.description }}</p>{% endif %}
+    </a>
+  </li>
+  {% endfor %}
+  {% if untopiced %}
+  <li class="tile">
+    <a href="/notes?topic=none">
+      <div class="tile-head"><span class="tile-name">Not in any topic</span><span class="count">{{ untopiced }}</span></div>
+      <p>Captured since topics were last discovered, or fitting none.</p>
+    </a>
+  </li>
+  {% endif %}
+</ul>
+{% else %}
+<p class="empty">No topics yet. Run <code>scripts/discover_topics.py</code> to group the library.</p>
+{% endif %}
+
+<h2 class="section">Recently saved</h2>
+{{ card_list(recent) }}
+{% endblock %}

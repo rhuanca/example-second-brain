@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% from "macros.html" import card_list %}
+{% block title %}{{ heading }} · Second Brain{% endblock %}
+{% block content %}
+<h1>{{ heading }}</h1>
+<p class="lede">{% if description %}{{ description }} · {% endif %}{{ cards | length }} note{{ "" if cards | length == 1 else "s" }}</p>
+
+{% for name, options in facets.items() if options %}
+<div class="facets facet-block" aria-label="Filter by {{ name }}">
+  <span class="facets-label">{{ name | capitalize }}</span>
+  {% for option in options %}
+  <a class="chip" href="{{ option.url }}"{% if option.active %} aria-current="true"{% endif %}>{{ option.label }} <span class="count">{{ option.count }}</span></a>
+  {% endfor %}
+</div>
+{% endfor %}
+
+{{ card_list(cards) }}
+{% endblock %}

@@ -87,6 +87,14 @@ class KbSettingsTest(unittest.TestCase):
         settings = KbSettings.from_env({"VAULT_PATH": "/tmp/vault", "KB_HOST": "::1"})
         self.assertEqual(settings.host, "::1")
 
+    def test_access_settings_must_come_as_a_pair(self):
+        for env in [
+            {"KB_CF_ACCESS_TEAM_DOMAIN": "team.cloudflareaccess.com"},
+            {"KB_CF_ACCESS_AUD": "aud123"},
+        ]:
+            with self.subTest(env=env), self.assertRaises(ConfigError):
+                KbSettings.from_env({"VAULT_PATH": "/tmp/vault", **env})
+
     def test_bad_port_is_rejected(self):
         for port in ["abc", "0", "70000"]:
             with self.subTest(port=port), self.assertRaises(ConfigError):

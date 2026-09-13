@@ -1,26 +1,33 @@
 """Application-level authentication for the knowledge-base service.
 
 Cloudflare Access is the front door, but this layer assumes the edge has been
-bypassed: every `/mcp` request must carry a known bearer token, checked in
-constant time, and it is rejected here -- before the MCP app runs and so before
-anything on disk is read.
+bypassed. Two consumers, two checks:
 
-Tokens are accepted from the `Authorization` header only. A token in the query
-string is refused outright rather than ignored, because URLs end up in logs,
-shell history and referrers; failing loudly stops that habit forming.
+- Agents (`/mcp`): a known bearer token, checked in constant time, rejected here
+  -- before the MCP app runs and so before anything on disk is read. Tokens are
+  accepted from the `Authorization` header only; a token in the query string is
+  refused outright, because URLs end up in logs, shell history and referrers.
+- Browsers (everything else): the signed `Cf-Access-Jwt-Assertion` that Access
+  attaches after its own sign-in. A request that did not come through Access has
+  no valid assertion and is refused. With Access not configured, the browse UI
+  is closed unless `KB_WEB_ALLOW_UNAUTHENTICATED` is set for local use.
 """
 
 from __future__ import annotations
 
 import hmac
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from urllib.parse import parse_qs
 
+import anyio
+import jwt
 from starlette.responses import PlainTextResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 logger = logging.getLogger(__name__)
+
+ACCESS_JWT_HEADER = b"cf-access-jwt-assertion"
 
 MCP_PREFIX = "/mcp"
 _QUERY_TOKEN_NAMES = {"token", "access_token", "auth", "key", "api_key", "bearer"}
@@ -85,6 +92,85 @@ class McpAuthMiddleware:
             return
 
         await self.app(scope, receive, send)
+
+
+class AccessVerifier:
+    """Validates Cloudflare Access application tokens (RS256, audience, issuer, expiry).
+
+    `key_resolver` maps a token to its public key; by default it fetches the
+    team's published certs and caches them, and tests inject a local key.
+    """
+
+    def __init__(
+        self,
+        team_domain: str,
+        audience: str,
+        *,
+        key_resolver: Callable[[str], object] | None = None,
+    ):
+        domain = team_domain.strip().removeprefix("https://").rstrip("/")
+        self.issuer = f"https://{domain}"
+        self.audience = audience
+        if key_resolver is None:
+            client = jwt.PyJWKClient(f"{self.issuer}/cdn-cgi/access/certs")
+            key_resolver = lambda token: client.get_signing_key_from_jwt(token).key
+        self._key_resolver = key_resolver
+
+    def verify(self, token: str | None) -> bool:
+        if not token:
+            return False
+        try:
+            key = self._key_resolver(token)
+            jwt.decode(
+                token,
+                key,
+                algorithms=["RS256"],
+                audience=self.audience,
+                issuer=self.issuer,
+                options={"require": ["exp", "iat", "aud", "iss"]},
+            )
+        except (jwt.PyJWTError, ValueError) as exc:
+            logger.warning("access token rejected: %s", type(exc).__name__)
+            return False
+        return True
+
+
+class WebAuthMiddleware:
+    """Guards every non-`/mcp` path: Access JWT, explicit dev opt-out, or 403."""
+
+    def __init__(
+        self,
+        app: ASGIApp,
+        verifier: AccessVerifier | None,
+        allow_unauthenticated: bool = False,
+    ):
+        self.app = app
+        self.verifier = verifier
+        self.allow_unauthenticated = allow_unauthenticated
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or is_mcp_path(scope.get("path", "")):
+            await self.app(scope, receive, send)
+            return
+
+        if self.verifier is not None:
+            token = _header(scope, ACCESS_JWT_HEADER)
+            # Fetching the certs is blocking network I/O; keep it off the loop.
+            if await anyio.to_thread.run_sync(self.verifier.verify, token):
+                await self.app(scope, receive, send)
+                return
+            _log_rejection(scope, "missing or invalid Access token")
+            message = "Forbidden: sign in through Cloudflare Access."
+        elif self.allow_unauthenticated:
+            await self.app(scope, receive, send)
+            return
+        else:
+            message = (
+                "The browse UI is closed: configure KB_CF_ACCESS_TEAM_DOMAIN and "
+                "KB_CF_ACCESS_AUD, or set KB_WEB_ALLOW_UNAUTHENTICATED=true for local use."
+            )
+        response = PlainTextResponse(message, status_code=403)
+        await response(scope, receive, send)
 
 
 def _header(scope: Scope, name: bytes) -> str | None:

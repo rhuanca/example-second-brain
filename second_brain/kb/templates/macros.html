@@ -1,0 +1,21 @@
+{% macro card_list(cards) -%}
+{% if cards %}
+<ul class="cards">
+  {% for card in cards %}
+  <li class="card">
+    <h3><a href="/notes/{{ card.id | urlencode }}">{{ card.title }}</a></h3>
+    {% if card.tldr %}<p>{{ card.tldr }}</p>{% endif %}
+    <div class="meta">
+      {% if card.date %}<span>{{ card.date }}</span>{% endif %}
+      <span>{{ card.source_type }}</span>
+      {% for topic in card.topics %}
+      <a class="chip" href="/notes?topic={{ topic.id | urlencode }}">{{ topic.name }}</a>
+      {% endfor %}
+    </div>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="empty">No notes here.</p>
+{% endif %}
+{%- endmacro %}

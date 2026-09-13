@@ -3,6 +3,9 @@
 `/mcp` is the MCP endpoint for agents; everything else is the browse UI. Both
 read the same `Library`. The MCP app is mounted last, at the root, so it answers
 exactly `/mcp` (no trailing-slash redirect) while the web routes match first.
+
+`/mcp` is guarded by a bearer token, every other path by Cloudflare Access (or
+the explicit local-dev opt-out); see `auth.py`.
 """
 
 from __future__ import annotations
@@ -13,12 +16,13 @@ from typing import Callable
 import anyio
 from fastapi import FastAPI
 
-from second_brain.kb.auth import McpAuthMiddleware
+from second_brain.kb.auth import AccessVerifier, McpAuthMiddleware, WebAuthMiddleware
 from second_brain.kb.config import KbSettings
 from second_brain.kb.embeddings import MODELS_DIR, Embedder, FastEmbedder
 from second_brain.kb.mcp_server import build_mcp, http_app
 from second_brain.kb.retrieval import Library
 from second_brain.kb.tools import KbTools
+from second_brain.kb.web import SecurityHeadersMiddleware, build_router
 from second_brain.vault import Vault
 
 
@@ -28,8 +32,9 @@ def create_app(
     library: Library | None = None,
     embedder: Embedder | None = None,
     answer: Callable[..., str] | None = None,
+    access_verifier: AccessVerifier | None = None,
 ) -> FastAPI:
-    """Build the service. `library`, `embedder` and `answer` are injectable for tests."""
+    """Build the service. Collaborators are injectable for tests."""
     if library is None:
         embedder = embedder or FastEmbedder(
             settings.embed_model, settings.index_dir / MODELS_DIR
@@ -54,6 +59,19 @@ def create_app(
     app.state.library = library
     app.state.settings = settings
 
+    if access_verifier is None and settings.cf_access_team_domain and settings.cf_access_aud:
+        access_verifier = AccessVerifier(
+            settings.cf_access_team_domain, settings.cf_access_aud
+        )
+
+    app.include_router(build_router(library))
     app.mount("/", mcp_app)
+    # Each middleware guards its own paths: bearer token for /mcp, Access for the rest.
+    app.add_middleware(
+        WebAuthMiddleware,
+        verifier=access_verifier,
+        allow_unauthenticated=settings.web_allow_unauthenticated,
+    )
     app.add_middleware(McpAuthMiddleware, tokens=settings.auth_tokens)
+    app.add_middleware(SecurityHeadersMiddleware)
     return app
