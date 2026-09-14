@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% from "macros.html" import source_icon, topic_chip %}
+{% block title %}{{ note.title }} · Second Brain{% endblock %}
+{% block content %}
+<div class="note-hero{% if note.thumbnail %} has-thumb{% endif %}">
+  <div>
+    <h1>{{ note.title }}</h1>
+    <div class="meta">
+      {% if note.date %}<span>{{ note.date }}</span>{% endif %}
+      <span class="src">{{ source_icon(note.source_type) }}{{ note.source_type }}</span>
+      {% for topic in note.topics %}{{ topic_chip(topic) }}{% endfor %}
+    </div>
+  </div>
+  {% if note.thumbnail %}<img src="{{ note.thumbnail }}" alt="" width="320" height="180">{% endif %}
+</div>
+
+<article class="note-body">
+  <h2>TL;DR</h2>
+  <p>{{ note.tldr or "—" }}</p>
+
+  {% if note.key_points %}
+  <h2>Key technical points</h2>
+  <ul>{% for point in note.key_points %}<li>{{ point }}</li>{% endfor %}</ul>
+  {% endif %}
+
+  {% if note.prototype_ideas %}
+  <h2>Prototype ideas</h2>
+  <ul>{% for idea in note.prototype_ideas %}<li>{{ idea }}</li>{% endfor %}</ul>
+  {% endif %}
+
+  <div class="actions">
+    {% if note.source_url %}
+    <a class="source-link" href="{{ note.source_url }}" rel="noopener noreferrer" target="_blank">Original: {{ note.source_label }}</a>
+    {% elif note.source_label %}
+    <span class="source-link">Source: {{ note.source_label }}</span>
+    {% endif %}
+    {% if has_source %}<a href="/notes/{{ note.id | urlencode }}/source">Full captured text</a>{% endif %}
+  </div>
+</article>
+{% endblock %}

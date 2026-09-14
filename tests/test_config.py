@@ -1,3 +1,4 @@
+import os
 import unittest
 from pathlib import Path
 
@@ -114,6 +115,19 @@ class SettingsTest(unittest.TestCase):
         s = Settings.from_env(_valid_env(VAULT_PATH="~/myvault"))
         self.assertTrue(s.vault_path.is_absolute())
         self.assertTrue(str(s.vault_path).endswith("myvault"))
+
+    def test_vault_path_expands_variables_like_the_knowledge_base(self):
+        from second_brain.kb.config import KbSettings
+
+        os.environ["SB_TEST_BASE"] = "/tmp/sb-base"
+        self.addCleanup(os.environ.pop, "SB_TEST_BASE")
+        env = _valid_env(VAULT_PATH="$SB_TEST_BASE/vault")
+
+        collector = Settings.from_env(env)
+        knowledge_base = KbSettings.from_env(env)
+
+        self.assertEqual(collector.vault_path, Path("/tmp/sb-base/vault").resolve())
+        self.assertEqual(collector.vault_path, knowledge_base.vault_path)
 
 
 if __name__ == "__main__":

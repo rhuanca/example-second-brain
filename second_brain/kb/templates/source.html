@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}Source: {{ note.title }} · Second Brain{% endblock %}
+{% block content %}
+<h1>{{ note.title }}</h1>
+<p class="lede"><a href="/notes/{{ note.id | urlencode }}">Back to the summary</a>{% if note.source_url %} · <a class="source-link" href="{{ note.source_url }}" rel="noopener noreferrer" target="_blank">original</a>{% endif %}</p>
+<p class="notice">Full text as captured from the web, shown as plain text.</p>
+<pre class="source">{{ text }}</pre>
+{% endblock %}

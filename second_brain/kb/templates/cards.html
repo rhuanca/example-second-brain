@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% from "macros.html" import card_grid %}
+{% block title %}{{ heading }} · Second Brain{% endblock %}
+{% block content %}
+<h1>{% if topic_slot is not none %}<span class="swatch bg-s{{ topic_slot }}" style="display:inline-block;width:14px;height:14px;margin-right:10px;vertical-align:1px"></span>{% endif %}{{ heading }}</h1>
+<p class="lede">{% if description %}{{ description }} · {% endif %}{{ cards | length }} note{{ "" if cards | length == 1 else "s" }}</p>
+
+{% for name, options in facets.items() if options %}
+<div class="facets" aria-label="Filter by {{ name }}">
+  <span class="facets-label">{{ name | capitalize }}</span>
+  {% for option in options %}
+  <a class="chip" href="{{ option.url }}"{% if option.active %} aria-current="true"{% endif %}>{{ option.label }} <span class="count">{{ option.count }}</span></a>
+  {% endfor %}
+</div>
+{% endfor %}
+
+<div style="margin-top:18px">{{ card_grid(cards, empty) }}</div>
+{% endblock %}
