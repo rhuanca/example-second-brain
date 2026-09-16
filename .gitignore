@@ -27,3 +27,6 @@ __pycache__/
 
 # OS
 .DS_Store
+
+# Personal runbooks with real hostnames/ids (not for a public repo)
+*.local.md
