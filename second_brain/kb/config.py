@@ -26,6 +26,9 @@ DEFAULT_EMBED_MODEL = "BAAI/bge-small-en-v1.5"
 
 # Derived data lives outside the vault so it never pollutes Obsidian or sync.
 DEFAULT_INDEX_DIR = "~/.local/share/second-brain-kb"
+# Stars, archive flags and reads are the user's own data, not derived: keep them
+# out of the index directory, which is safe to delete and rebuild.
+DEFAULT_STATE_DB = "~/.local/share/second-brain/kb-state.db"
 
 CHAT_EFFORTS = ("low", "medium", "high", "xhigh", "max")
 DEFAULT_CHAT_EFFORT = "medium"
@@ -43,6 +46,9 @@ class KbSettings:
     anthropic_model: str = DEFAULT_MODEL
     index_dir: Path = field(
         default_factory=lambda: Path(DEFAULT_INDEX_DIR).expanduser().resolve()
+    )
+    state_db: Path = field(
+        default_factory=lambda: Path(DEFAULT_STATE_DB).expanduser().resolve()
     )
     embed_model: str = DEFAULT_EMBED_MODEL
     host: str = DEFAULT_HOST
@@ -97,6 +103,7 @@ class KbSettings:
             chat_model=_clean(env.get("KB_CHAT_MODEL")) or anthropic_model,
             chat_effort=effort,
             index_dir=_path(_clean(env.get("KB_INDEX_DIR")) or DEFAULT_INDEX_DIR),
+            state_db=_path(_clean(env.get("KB_STATE_DB")) or DEFAULT_STATE_DB),
             embed_model=_clean(env.get("KB_EMBED_MODEL")) or DEFAULT_EMBED_MODEL,
             host=host,
             port=_port(env.get("KB_PORT")),

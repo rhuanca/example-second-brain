@@ -19,6 +19,8 @@ __pycache__/
 # Knowledge-base embedding index + downloaded model, when KB_INDEX_DIR points
 # inside the project (derived data, rebuildable, and it indexes your notes).
 /.kb-index/
+# Stars/archive/reads state when KB_STATE_DB points inside the project (+ WAL files).
+/.kb-state.db*
 
 # Generated diagram renders (keep the .mmd sources)
 .diagrams/*.svg

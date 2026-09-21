@@ -53,6 +53,9 @@ class KbSettingsTest(unittest.TestCase):
         self.assertFalse(settings.web_allow_unauthenticated)
         self.assertTrue(settings.index_dir.is_absolute())
         self.assertNotIn(str(settings.vault_path), str(settings.index_dir))
+        self.assertTrue(settings.state_db.is_absolute())
+        # User data must not sit in the rebuildable index directory.
+        self.assertFalse(settings.state_db.is_relative_to(settings.index_dir))
 
     def test_reads_service_values(self):
         settings = KbSettings.from_env(
@@ -60,6 +63,7 @@ class KbSettingsTest(unittest.TestCase):
                 "VAULT_PATH": "/tmp/vault",
                 "KB_INDEX_DIR": "/tmp/kb-index",
                 "KB_EMBED_MODEL": "some/model",
+                "KB_STATE_DB": "/tmp/kb-state.db",
                 "KB_HOST": "localhost",
                 "KB_PORT": "9000",
                 "KB_AUTH_TOKENS": " laptop-token , cloud-token,, ",
@@ -71,6 +75,7 @@ class KbSettingsTest(unittest.TestCase):
         )
         self.assertEqual(settings.index_dir, Path("/tmp/kb-index").resolve())
         self.assertEqual(settings.embed_model, "some/model")
+        self.assertEqual(settings.state_db, Path("/tmp/kb-state.db").resolve())
         self.assertEqual(settings.host, "localhost")
         self.assertEqual(settings.port, 9000)
         self.assertEqual(settings.auth_tokens, ("laptop-token", "cloud-token"))
