@@ -92,7 +92,12 @@ class _Vault(unittest.TestCase):
         return TestClient(app)
 
 
-class PagesTest(_Vault):
+SAME_SITE = {"Sec-Fetch-Site": "same-origin"}
+
+
+class _Client(_Vault):
+    """An open (dev-mode) client, with helpers; no tests of its own."""
+
     def setUp(self):
         super().setUp()
         self._client = self.client(KB_WEB_ALLOW_UNAUTHENTICATED="true").__enter__()
@@ -106,6 +111,11 @@ class PagesTest(_Vault):
         self.assertEqual(response.status_code, status, path)
         return response.text
 
+    def post(self, path, data, headers=SAME_SITE):
+        return self._client.post(path, data=data, headers=headers, follow_redirects=False)
+
+
+class PagesTest(_Client):
     def test_index_shows_topics_untopiced_and_recent(self):
         html = self.get("/")
         self.assertIn("Agents", html)
@@ -258,13 +268,7 @@ class PagesTest(_Vault):
         self.assertEqual(response.headers["referrer-policy"], "no-referrer")
 
 
-SAME_SITE = {"Sec-Fetch-Site": "same-origin"}
-
-
-class StarAndArchiveTest(PagesTest):
-    def post(self, path, data, headers=SAME_SITE):
-        return self._client.post(path, data=data, headers=headers, follow_redirects=False)
-
+class StarAndArchiveTest(_Client):
     def test_star_and_unstar(self):
         response = self.post("/notes/rag/star", {"on": "1"})
         self.assertEqual(response.status_code, 303)
@@ -327,6 +331,56 @@ class StarAndArchiveTest(PagesTest):
         page = self.get("/notes/memory")
         self.assertIn("Read 2× on the web and 1× by agents · last 21 Sep 2026", page)
         self.assertEqual(self.state.read_stats()["memory"].web, 3)
+
+
+class ArchivePageTest(_Client):
+    def test_lists_archived_notes_and_unarchives_back_to_the_page(self):
+        self.post("/notes/rag/archive", {"on": "1"})
+        page = self.get("/archive")
+        self.assertIn("Archived · 1", page)
+        self.assertIn('href="/notes/rag"', page)
+
+        response = self.post("/notes/rag/archive", {"on": "0", "back": "archive"})
+        self.assertEqual(response.headers["location"], "/archive")
+        self.assertIn("No archived notes.", self.get("/archive"))
+
+    def test_candidates_are_old_unread_and_unstarred(self):
+        self.assertIn("Nothing looks stale.", self.get("/archive"))
+
+        # Four months on: everything is older than 90 days.
+        self.now = dt.datetime(2027, 1, 15).timestamp()
+        self.post("/notes/xss/star", {"on": "1"})
+        self._client.get("/notes/memory")  # read just now: not stale
+        page = self.get("/archive")
+        self.assertIn("Candidates · 1", page)
+        self.assertIn('href="/notes/rag"', page)
+
+
+class ArchiveCandidatesTest(unittest.TestCase):
+    def test_order_and_rules(self):
+        from second_brain.kb.notes import Card
+        from second_brain.kb.state import ReadStats
+        from second_brain.kb.web import archive_candidates
+
+        now = dt.datetime(2026, 12, 1).timestamp()
+        day = 86_400
+        cards = [
+            Card("fresh", "Fresh", date="2026-11-20"),
+            Card("undated", "Undated", date=""),
+            Card("starred", "Starred", date="2026-01-01"),
+            Card("read-lately", "Read lately", date="2026-01-01"),
+            Card("read-long-ago", "Read long ago", date="2026-01-01"),
+            Card("never-newer", "Never read, newer", date="2026-05-01"),
+            Card("never-older", "Never read, older", date="2026-02-01"),
+        ]
+        stats = {
+            "read-lately": ReadStats(web=1, last_at=now - 10 * day),
+            "read-long-ago": ReadStats(mcp=2, last_at=now - 200 * day),
+        }
+        picked = archive_candidates(cards, stats, starred=lambda i: i == "starred", now=now)
+        self.assertEqual(
+            [c.note_id for c in picked], ["never-older", "never-newer", "read-long-ago"]
+        )
 
 
 class WebAuthTest(_Vault):

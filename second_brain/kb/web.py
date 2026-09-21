@@ -53,8 +53,12 @@ NAV = [
     ("/map", "Map"),
     ("/timeline", "Timeline"),
     ("/chat", "Chat"),
+    ("/archive", "Archive"),
 ]
 MAX_CHAT_BODY = 200_000  # bytes; 20 turns × 4,000 chars fits with room to spare
+# A note is an archive candidate once it is this old and nobody -- you on the
+# web or an agent over MCP -- has read it for this long.
+STALE_DAYS = 90
 MAX_FORM_BODY = 1_000  # bytes; the star/archive forms send one or two short fields
 
 # Close to the panel's real width on a desktop, so 13px labels render near 13px.
@@ -358,6 +362,28 @@ def build_router(
             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
         )
 
+    @router.get("/archive", response_class=HTMLResponse)
+    def archive_page(request: Request):
+        library.refresh_if_stale()
+        slots = topic_slots(library.topics())
+        stats = library.read_stats()
+
+        def row(card: Card) -> dict:
+            return _view(card, library, slots) | {"reads": _reads_line(stats.get(card.note_id))}
+
+        archived = [c for c in library.cards(include_archived=True) if library.is_archived(c.note_id)]
+        candidates = archive_candidates(
+            library.cards(), stats, starred=library.is_starred, now=library.now()
+        )
+        return render(
+            request,
+            "archive.html",
+            active="/archive",
+            stale_days=STALE_DAYS,
+            archived=[row(c) for c in sorted(archived, key=_newest_first)],
+            candidates=[row(c) for c in candidates],
+        )
+
     @router.get("/search", response_class=HTMLResponse)
     def search(request: Request, q: str = "", topic: str | None = None):
         library.refresh_if_stale()
@@ -537,6 +563,25 @@ def _facet(cards, key, param, filters, *, newest_first=False, label=str) -> list
         for value in values
     ]
     return options if len(values) > 1 or filters.get(param) else []
+
+
+def archive_candidates(cards, stats, *, starred, now: float, stale_days: int = STALE_DAYS):
+    """Notes worth retiring: saved over `stale_days` ago, unstarred, and not read
+    since then. Never-read notes first, then the longest unread; undated notes are
+    left out because their age is unknown."""
+    cutoff = now - stale_days * 86_400
+    cutoff_day = int(datetime.fromtimestamp(cutoff).strftime("%Y%m%d"))
+    picked = []
+    for card in cards:
+        saved = _date_key(card.date)
+        if not saved or saved >= cutoff_day or starred(card.note_id):
+            continue
+        read = stats.get(card.note_id)
+        last = read.last_at if read and read.total else None
+        if last is not None and last >= cutoff:
+            continue
+        picked.append((last is not None, last or 0.0, saved, card.note_id, card))
+    return [entry[-1] for entry in sorted(picked)]
 
 
 def _starred_facet(cards, library: Library, filters: dict) -> list[dict]:

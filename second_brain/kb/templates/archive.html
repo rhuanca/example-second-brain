@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Archive · Second Brain{% endblock %}
+{% block style %}
+  .rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+  .rows li { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; justify-content: space-between;
+    padding: 10px 14px; background: var(--surface); border-radius: 10px; box-shadow: 0 0 0 1px var(--ring); }
+  .rows .what { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 260px; }
+  .rows .what a { font-weight: 600; text-decoration: none; overflow-wrap: anywhere; }
+  .rows .what a:hover { text-decoration: underline; }
+  .rows form { margin: 0; }
+{% endblock %}
+{% block content %}
+<h1>Archive</h1>
+<p class="lede">Archived notes are hidden from lists, search, the map and chat, but nothing is deleted.</p>
+
+{% macro rows(items, on, label) -%}
+<ul class="rows">
+  {% for note in items %}
+  <li>
+    <div class="what">
+      <a href="/notes/{{ note.id | urlencode }}">{{ note.title }}</a>
+      <span class="reads">{% if note.date %}Saved {{ note.date }} · {% endif %}{{ note.reads }}</span>
+    </div>
+    <form method="post" action="/notes/{{ note.id | urlencode }}/archive">
+      <input type="hidden" name="on" value="{{ on }}">
+      <input type="hidden" name="back" value="archive">
+      <button class="btn" type="submit">{{ label }}</button>
+    </form>
+  </li>
+  {% endfor %}
+</ul>
+{%- endmacro %}
+
+<div class="section-head"><h2 class="section">Candidates · {{ candidates | length }}</h2></div>
+<p class="notice">Saved more than {{ stale_days }} days ago, not starred, and not read on the web or by an agent in {{ stale_days }} days. Never-read notes come first.</p>
+{% if candidates %}{{ rows(candidates, 1, "Archive") }}{% else %}<p class="empty">Nothing looks stale.</p>{% endif %}
+
+<div class="section-head"><h2 class="section">Archived · {{ archived | length }}</h2></div>
+{% if archived %}{{ rows(archived, 0, "Unarchive") }}{% else %}<p class="empty">No archived notes.</p>{% endif %}
+{% endblock %}

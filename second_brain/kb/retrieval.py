@@ -205,6 +205,9 @@ class Library:
     def read_stats(self) -> dict[str, ReadStats]:
         return self._state.read_stats() if self._state else {}
 
+    def now(self) -> float:
+        return self._state.now() if self._state else time.time()
+
     # --- topics ----------------------------------------------------------------
 
     def topics(self) -> list[Topic]:

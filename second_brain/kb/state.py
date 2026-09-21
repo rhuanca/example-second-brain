@@ -62,6 +62,10 @@ class NoteState:
         # One short-lived connection per call: requests arrive on many threads.
         return closing(sqlite3.connect(self.path, timeout=5))
 
+    def now(self) -> float:
+        """The store's clock, so "how long ago" agrees with the recorded times."""
+        return self._clock()
+
     # --- flags -------------------------------------------------------------------
 
     def set_starred(self, note_id: str, on: bool) -> None:
