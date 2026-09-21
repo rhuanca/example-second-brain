@@ -12,12 +12,13 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, quote, urlencode
 
 import frontmatter
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -54,6 +55,7 @@ NAV = [
     ("/chat", "Chat"),
 ]
 MAX_CHAT_BODY = 200_000  # bytes; 20 turns × 4,000 chars fits with room to spare
+MAX_FORM_BODY = 1_000  # bytes; the star/archive forms send one or two short fields
 
 # Close to the panel's real width on a desktop, so 13px labels render near 13px.
 TREEMAP_W, TREEMAP_H = 1050, 300
@@ -137,6 +139,11 @@ def build_router(
                 height=200,
             ),
             recent=[_view(c, library, slots) for c in sorted(cards, key=_newest_first)[:RECENT]],
+            starred=[
+                _view(c, library, slots)
+                for c in sorted(cards, key=_newest_first)
+                if library.is_starred(c.note_id)
+            ][:RECENT],
         )
 
     @router.get("/notes", response_class=HTMLResponse)
@@ -145,6 +152,7 @@ def build_router(
         topic: str | None = None,
         source: str | None = None,
         month: str | None = None,
+        starred: str | None = None,
     ):
         library.refresh_if_stale()
         cards = library.cards()
@@ -164,8 +172,10 @@ def build_router(
             description = match.description if match else ""
             topic_slot = slots.get(topic, OTHER)
 
-        filters = {"topic": topic, "source": source, "month": month}
+        starred = "1" if starred else None
+        filters = {"topic": topic, "source": source, "month": month, "starred": starred}
         facets = {
+            "starred": _starred_facet(cards, library, filters),
             "source": _facet(cards, _source_type, "source", filters),
             "month": _facet(
                 cards, lambda c: month_of(c) or "", "month", filters,
@@ -176,6 +186,8 @@ def build_router(
             cards = [c for c in cards if _source_type(c) == source]
         if month:
             cards = [c for c in cards if month_of(c) == month]
+        if starred:
+            cards = [c for c in cards if library.is_starred(c.note_id)]
 
         return render(
             request,
@@ -310,11 +322,7 @@ def build_router(
     async def chat_api(request: Request):
         if not (request.headers.get("content-type") or "").startswith("application/json"):
             return JSONResponse({"error": "Send JSON."}, status_code=415)
-        origin = request.headers.get("origin")
-        host = request.headers.get("host", "")
-        if origin and origin not in {f"https://{host}", f"http://{host}"}:
-            # The browser attaches the Access cookie to cross-site requests too;
-            # only our own pages may start a chat.
+        if not _same_origin(request):
             return JSONResponse({"error": "Cross-origin requests are not allowed."}, status_code=403)
         length = request.headers.get("content-length") or "0"
         if not length.isdigit() or int(length) > MAX_CHAT_BODY:
@@ -373,12 +381,40 @@ def build_router(
         card = library.card(note_id)
         if card is None:
             return not_found(request)
+        # Shown as it was before this visit, so "last" is the previous read.
+        reads = _reads_line(library.read_stats().get(card.note_id))
+        library.record_read(card.note_id, "web")
         return render(
             request,
             "note.html",
             note=_view(card, library, topic_slots(library.topics())),
             has_source=library.archive_text(card.note_id) is not None,
+            archived=library.is_archived(card.note_id),
+            reads=reads,
         )
+
+    @router.post("/notes/{note_id}/star")
+    async def star(request: Request, note_id: str):
+        return await _flag(request, note_id, library.set_starred)
+
+    @router.post("/notes/{note_id}/archive")
+    async def archive(request: Request, note_id: str):
+        return await _flag(request, note_id, library.set_archived)
+
+    async def _flag(request: Request, note_id: str, setter):
+        """A plain form POST (no script needed), answered with a redirect back."""
+        if not _same_origin(request):
+            return HTMLResponse("Cross-origin requests are not allowed.", status_code=403)
+        length = request.headers.get("content-length") or "0"
+        if not length.isdigit() or int(length) > MAX_FORM_BODY:
+            return HTMLResponse("Request too large.", status_code=413)
+        form = parse_qs((await request.body()).decode("utf-8", "replace"))
+        on = form.get("on", ["1"])[0] == "1"
+        card = library.card(note_id)
+        if card is None or not setter(card.note_id, on):
+            return not_found(request)
+        back = "/archive" if form.get("back") == ["archive"] else f"/notes/{quote(card.note_id)}"
+        return RedirectResponse(back, status_code=303)
 
     @router.get("/notes/{note_id}/source", response_class=HTMLResponse)
     def source(request: Request, note_id: str):
@@ -387,6 +423,7 @@ def build_router(
         text = library.archive_text(note_id) if card else None
         if card is None or text is None:
             return not_found(request)
+        library.record_read(card.note_id, "web")
         return render(
             request,
             "source.html",
@@ -426,6 +463,7 @@ def _view(card: Card, library: Library, slots: dict[str, int]) -> dict:
     return {
         "id": card.note_id,
         "title": card.title,
+        "starred": library.is_starred(card.note_id),
         "tldr": card.tldr,
         "date": card.date,
         "source_url": card.source if _is_web_url(card.source) else "",
@@ -499,6 +537,50 @@ def _facet(cards, key, param, filters, *, newest_first=False, label=str) -> list
         for value in values
     ]
     return options if len(values) > 1 or filters.get(param) else []
+
+
+def _starred_facet(cards, library: Library, filters: dict) -> list[dict]:
+    count = sum(1 for c in cards if library.is_starred(c.note_id))
+    if not count and not filters.get("starred"):
+        return []
+    return [
+        {"label": "All", "count": len(cards), "url": _url({**filters, "starred": None}),
+         "active": not filters.get("starred")},
+        {"label": "★ Starred", "count": count, "url": _url({**filters, "starred": "1"}),
+         "active": bool(filters.get("starred"))},
+    ]
+
+
+def _same_origin(request: Request) -> bool:
+    """True only for a request our own pages started.
+
+    The browser attaches the Access cookie to cross-site requests too, so every
+    POST checks this. `Sec-Fetch-Site` is sent by every current browser whatever
+    the referrer policy; an Origin matching our host is accepted as well. A
+    request with neither (or `Origin: null`) is refused.
+    """
+    site = request.headers.get("sec-fetch-site")
+    if site is not None:
+        return site == "same-origin"
+    origin = request.headers.get("origin")
+    host = request.headers.get("host", "")
+    return origin in {f"https://{host}", f"http://{host}"}
+
+
+def _reads_line(stats) -> str:
+    if stats is None or not stats.total:
+        return "First time reading this"
+    parts = []
+    if stats.web:
+        parts.append(f"{stats.web}× on the web")
+    if stats.mcp:
+        parts.append(f"{stats.mcp}× by agents")
+    return f"Read {' and '.join(parts)} · last {_day(stats.last_at)}"
+
+
+def _day(timestamp: float) -> str:
+    moment = datetime.fromtimestamp(timestamp)
+    return f"{moment.day} {moment:%b %Y}"
 
 
 def _url(params: dict) -> str:

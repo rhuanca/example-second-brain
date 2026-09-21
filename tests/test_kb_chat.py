@@ -25,6 +25,8 @@ from second_brain.kb.tools import UNTRUSTED_NOTICE
 from second_brain.vault import Vault
 from tests.kb_fixtures import FakeEmbedder, write_note
 
+SAME_SITE = {"Sec-Fetch-Site": "same-origin"}
+
 
 class _Final:
     def __init__(self, stop_reason="end_turn"):
@@ -245,7 +247,9 @@ class ChatApiTest(_Base):
         return http.post(
             "/api/chat",
             content=json.dumps(body),
-            headers={"Content-Type": "application/json", **headers},
+            # What a browser sends from our own page, unless a test overrides it.
+            headers={"Content-Type": "application/json",
+                     **({} if "Origin" in headers else SAME_SITE), **headers},
         )
 
     def test_streams_ndjson_events(self):
@@ -272,15 +276,21 @@ class ChatApiTest(_Base):
                           Origin="https://evil.example").status_code,
                 403,
             )
+            for foreign in [{"Sec-Fetch-Site": "cross-site"}, {"Origin": "null"}, {}]:
+                response = http.post("/api/chat", content="{}",
+                                     headers={"Content-Type": "application/json", **foreign})
+                self.assertEqual(response.status_code, 403, foreign)
             self.assertEqual(
                 self.post(http, {"messages": [{"role": "user", "content": "q"}]},
                           Origin="http://testserver").status_code,
                 200,
             )
             self.assertEqual(self.post(http, {"messages": []}).status_code, 400)
-            bad = http.post("/api/chat", content="{not json", headers={"Content-Type": "application/json"})
+            bad = http.post("/api/chat", content="{not json",
+                            headers={"Content-Type": "application/json", **SAME_SITE})
             self.assertEqual(bad.status_code, 400)
-            big = http.post("/api/chat", content="x" * 200_001, headers={"Content-Type": "application/json"})
+            big = http.post("/api/chat", content="x" * 200_001,
+                            headers={"Content-Type": "application/json", **SAME_SITE})
             self.assertEqual(big.status_code, 413)
 
     def test_without_a_key_the_page_explains_and_the_api_refuses(self):

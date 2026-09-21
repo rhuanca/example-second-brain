@@ -11,6 +11,7 @@ from second_brain.kb.app import create_app
 from second_brain.kb.auth import AccessVerifier
 from second_brain.kb.config import KbSettings
 from second_brain.kb.retrieval import Library
+from second_brain.kb.state import NoteState
 from second_brain.kb.topics import Taxonomy, Topic
 from second_brain.vault import Vault
 from tests.kb_fixtures import FakeEmbedder, write_archive, write_note
@@ -39,6 +40,8 @@ class _Vault(unittest.TestCase):
         self.root.mkdir()
         self.index = base / "index"
         (base / "secret.md").write_text("SECRET", encoding="utf-8")
+        self.now = dt.datetime(2026, 9, 21, 12, 0).timestamp()
+        self.state = NoteState(base / "state.db", clock=lambda: self.now)
 
         write_note(
             self.root,
@@ -79,7 +82,11 @@ class _Vault(unittest.TestCase):
     def client(self, verifier=None, **env):
         settings = _settings(self.root, self.index, **env)
         library = Library(
-            Vault(self.root), self.index, FakeEmbedder(), taxonomy_loader=lambda: self.taxonomy
+            Vault(self.root),
+            self.index,
+            FakeEmbedder(),
+            taxonomy_loader=lambda: self.taxonomy,
+            state=self.state,
         )
         app = create_app(settings, library=library, access_verifier=verifier)
         return TestClient(app)
@@ -249,6 +256,77 @@ class PagesTest(_Vault):
         self.assertIn("img-src 'self' https://i.ytimg.com", response.headers["content-security-policy"])
         self.assertEqual(response.headers["x-content-type-options"], "nosniff")
         self.assertEqual(response.headers["referrer-policy"], "no-referrer")
+
+
+SAME_SITE = {"Sec-Fetch-Site": "same-origin"}
+
+
+class StarAndArchiveTest(PagesTest):
+    def post(self, path, data, headers=SAME_SITE):
+        return self._client.post(path, data=data, headers=headers, follow_redirects=False)
+
+    def test_star_and_unstar(self):
+        response = self.post("/notes/rag/star", {"on": "1"})
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/notes/rag")
+        self.assertEqual(self.state.starred(), {"rag"})
+
+        self.assertIn('aria-pressed="true"', self.get("/notes/rag"))
+        self.assertIn("★ Starred", self.get("/"))
+        starred = self.get("/notes?starred=1")
+        self.assertIn("RAG evals", starred)
+        self.assertNotIn("Agent memory", starred)
+
+        self.post("/notes/rag/star", {"on": "0"})
+        self.assertEqual(self.state.starred(), set())
+        self.assertNotIn("★ Starred", self.get("/"))
+
+    def test_archived_notes_leave_the_pages_but_keep_their_url(self):
+        self.assertEqual(self.post("/notes/memory/archive", {"on": "1"}).status_code, 303)
+
+        for path in ["/", "/notes", "/notes?topic=agents", "/map", "/search?q=vector+memory"]:
+            with self.subTest(path=path):
+                self.assertNotIn("/notes/memory", self.get(path))
+        page = self.get("/notes/memory")
+        self.assertIn("Archived — hidden", page)
+        self.assertIn("Unarchive", page)
+
+        self.post("/notes/memory/archive", {"on": "0"})
+        self.assertIn("/notes/memory", self.get("/notes"))
+
+    def test_writes_from_other_sites_are_refused(self):
+        for headers in [
+            {"Sec-Fetch-Site": "cross-site"},
+            {"Origin": "https://evil.example"},
+            {"Origin": "null"},
+            {},
+        ]:
+            with self.subTest(headers=headers):
+                response = self.post("/notes/rag/star", {"on": "1"}, headers=headers)
+                self.assertEqual(response.status_code, 403)
+        self.assertEqual(self.state.starred(), set())
+        # A browser without Sec-Fetch-Site still gets through with a matching Origin.
+        ok = self.post("/notes/rag/star", {"on": "1"}, headers={"Origin": "http://testserver"})
+        self.assertEqual(ok.status_code, 303)
+
+    def test_unknown_and_crafted_ids_are_404(self):
+        for note_id in ["nope", "..%2Fsecret"]:
+            with self.subTest(note_id=note_id):
+                self.assertEqual(self.post(f"/notes/{note_id}/star", {"on": "1"}).status_code, 404)
+        self.assertEqual(self.state.starred(), set())
+
+    def test_oversized_form_is_refused(self):
+        response = self.post("/notes/rag/star", {"on": "1", "pad": "x" * 2000})
+        self.assertEqual(response.status_code, 413)
+
+    def test_reading_a_note_is_counted(self):
+        self.assertIn("First time reading this", self.get("/notes/memory"))
+        self.get("/notes/memory/source")
+        self.state.record_read("memory", "mcp")
+        # The page shows the reads before this visit.
+        page = self.get("/notes/memory")
+        self.assertIn("Read 2× on the web and 1× by agents · last 21 Sep 2026", page)
+        self.assertEqual(self.state.read_stats()["memory"].web, 3)
 
 
 class WebAuthTest(_Vault):

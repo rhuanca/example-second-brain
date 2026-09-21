@@ -2,13 +2,25 @@
 {% from "macros.html" import source_icon, topic_chip %}
 {% block title %}{{ note.title }} · Second Brain{% endblock %}
 {% block content %}
+{% if archived %}<p class="banner">Archived — hidden from lists, search, the map and chat. <a href="/archive">All archived notes</a></p>{% endif %}
 <div class="note-hero{% if note.thumbnail %} has-thumb{% endif %}">
   <div>
-    <h1>{{ note.title }}</h1>
+    <h1>{% if note.starred %}<span class="star" aria-label="Starred">★</span>{% endif %}{{ note.title }}</h1>
     <div class="meta">
       {% if note.date %}<span>{{ note.date }}</span>{% endif %}
       <span class="src">{{ source_icon(note.source_type) }}{{ note.source_type }}</span>
       {% for topic in note.topics %}{{ topic_chip(topic) }}{% endfor %}
+    </div>
+    <div class="toolbar">
+      <form method="post" action="/notes/{{ note.id | urlencode }}/star">
+        <input type="hidden" name="on" value="{{ 0 if note.starred else 1 }}">
+        <button class="btn" type="submit" aria-pressed="{{ 'true' if note.starred else 'false' }}">{{ "★ Starred" if note.starred else "☆ Star" }}</button>
+      </form>
+      <form method="post" action="/notes/{{ note.id | urlencode }}/archive">
+        <input type="hidden" name="on" value="{{ 0 if archived else 1 }}">
+        <button class="btn" type="submit">{{ "Unarchive" if archived else "Archive" }}</button>
+      </form>
+      <span class="reads">{{ reads }}</span>
     </div>
   </div>
   {% if note.thumbnail %}<img src="{{ note.thumbnail }}" alt="" width="320" height="180">{% endif %}

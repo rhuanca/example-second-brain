@@ -63,6 +63,11 @@
   </section>
 </div>
 
+{% if starred %}
+<div class="section-head"><h2 class="section">★ Starred</h2><a href="/notes?starred=1">All starred →</a></div>
+{{ card_grid(starred) }}
+{% endif %}
+
 <div class="section-head"><h2 class="section">Recently saved</h2><a href="/notes">All notes →</a></div>
 {{ card_grid(recent) }}
 {% endblock %}

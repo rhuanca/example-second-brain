@@ -27,7 +27,7 @@
       {% endif %}
     </a>
     <div class="gbody">
-      <h3><a href="/notes/{{ card.id | urlencode }}">{{ card.title }}</a></h3>
+      <h3>{% if card.starred %}<span class="star" aria-label="Starred">★</span>{% endif %}<a href="/notes/{{ card.id | urlencode }}">{{ card.title }}</a></h3>
       {% if card.tldr %}<p class="clamp">{{ card.tldr }}</p>{% endif %}
       <div class="meta">
         {% if card.date %}<span>{{ card.date }}</span>{% endif %}

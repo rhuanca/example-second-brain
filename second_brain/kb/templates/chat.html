@@ -3,11 +3,6 @@
 {% block style %}
   main { max-width: 860px; }
   .chat-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
-  .btn { font: inherit; font-size: 0.9rem; border-radius: 999px; padding: 6px 14px; cursor: pointer;
-    border: 1px solid var(--grid); background: var(--surface); color: var(--ink); }
-  .btn:hover { border-color: var(--ink-2); }
-  .btn-primary { background: var(--ink); color: var(--page); border-color: var(--ink); }
-  .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
 
   .chat-log { display: flex; flex-direction: column; gap: 22px; margin: 18px 0 150px; }
   .msg-user { align-self: flex-end; max-width: 85%; background: var(--surface); box-shadow: 0 0 0 1px var(--ring);
