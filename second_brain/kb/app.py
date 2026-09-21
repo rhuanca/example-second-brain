@@ -24,6 +24,7 @@ from second_brain.kb.config import KbSettings
 from second_brain.kb.embeddings import MODELS_DIR, Embedder, FastEmbedder
 from second_brain.kb.mcp_server import build_mcp, http_app
 from second_brain.kb.retrieval import Library
+from second_brain.kb.state import NoteState
 from second_brain.kb.tools import KbTools
 from second_brain.kb.web import SecurityHeadersMiddleware, build_router
 from second_brain.vault import Vault
@@ -45,7 +46,12 @@ def create_app(
         embedder = embedder or FastEmbedder(
             settings.embed_model, settings.index_dir / MODELS_DIR
         )
-        library = Library(Vault(settings.vault_path), settings.index_dir, embedder)
+        library = Library(
+            Vault(settings.vault_path),
+            settings.index_dir,
+            embedder,
+            state=NoteState(settings.state_db),
+        )
 
     tools = KbTools(library, settings=settings, **({"answer": answer} if answer else {}))
     mcp = build_mcp(tools)

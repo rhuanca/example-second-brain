@@ -6,6 +6,11 @@ only place a caller-supplied note id is turned into a file, and it does that by
 looking the id up in the notes it enumerated -- never by joining the id into a
 path. Everything internet-facing goes through `card()` and `archive_text()`.
 
+Archived notes are hidden from `cards()` and `search()` -- and so from every page,
+the map, the chat and MCP search -- but `card()` still resolves them, so a direct
+link keeps working. Stars and archive flags come from `NoteState`; the service is
+the only writer, so they are cached here and updated on write.
+
 The collector keeps writing notes while this runs, so staleness is checked
 cheaply (file names and mtimes) at most once per `ttl`, and the expensive work --
 parsing and embedding -- only happens when that listing actually changed.
@@ -23,6 +28,7 @@ import numpy as np
 
 from second_brain.kb.embeddings import Embedder, EmbeddingIndex, RefreshStats, refresh
 from second_brain.kb.notes import Card, archive_path, load_cards
+from second_brain.kb.state import NoteState, ReadStats
 from second_brain.kb.topics import Taxonomy, Topic, load_taxonomy
 from second_brain.kb.visuals import Point, map_layout
 from second_brain.vault import Vault
@@ -56,6 +62,7 @@ class Library:
         ttl: float = DEFAULT_TTL,
         topic_threshold: float = TOPIC_THRESHOLD,
         fallback_threshold: float = FALLBACK_THRESHOLD,
+        state: NoteState | None = None,
     ):
         self.vault = vault
         self.index_dir = Path(index_dir)
@@ -77,6 +84,9 @@ class Library:
         self._topic_vectors = np.zeros((0, 0), dtype=np.float32)
         self._version = 0  # bumps whenever the index is replaced
         self._map_cache: tuple[tuple, list] | None = None
+        self._state = state
+        self._starred: set[str] = state.starred() if state else set()
+        self._archived: set[str] = state.archived() if state else set()
 
     # --- keeping up with the vault -------------------------------------------
 
@@ -121,9 +131,13 @@ class Library:
 
     # --- lookups (the only way ids become files) ------------------------------
 
-    def cards(self) -> list[Card]:
+    def cards(self, *, include_archived: bool = False) -> list[Card]:
         with self._lock:
-            return list(self._cards.values())
+            return [
+                card
+                for card in self._cards.values()
+                if include_archived or card.note_id not in self._archived
+            ]
 
     def card(self, note_id: object) -> Card | None:
         """The card for a known note id, or None. Never builds a path from input."""
@@ -156,6 +170,41 @@ class Library:
         except OSError:
             return False
 
+    # --- what the reader did with a note ------------------------------------------
+
+    def is_starred(self, note_id: str) -> bool:
+        with self._lock:
+            return note_id in self._starred
+
+    def is_archived(self, note_id: str) -> bool:
+        with self._lock:
+            return note_id in self._archived
+
+    def set_starred(self, note_id: object, on: bool) -> bool:
+        """Star or unstar a known note. False if the id is unknown or there is no store."""
+        return self._set_flag(note_id, on, self._starred, "set_starred")
+
+    def set_archived(self, note_id: object, on: bool) -> bool:
+        return self._set_flag(note_id, on, self._archived, "set_archived")
+
+    def _set_flag(self, note_id: object, on: bool, flagged: set[str], method: str) -> bool:
+        card = self.card(note_id)
+        if card is None or self._state is None:
+            return False
+        with self._lock:
+            getattr(self._state, method)(card.note_id, on)
+            (flagged.add if on else flagged.discard)(card.note_id)
+        return True
+
+    def record_read(self, note_id: object, channel: str) -> None:
+        """Count one read of a known note; unknown ids are ignored."""
+        card = self.card(note_id)
+        if card is not None and self._state is not None:
+            self._state.record_read(card.note_id, channel)
+
+    def read_stats(self) -> dict[str, ReadStats]:
+        return self._state.read_stats() if self._state else {}
+
     # --- topics ----------------------------------------------------------------
 
     def topics(self) -> list[Topic]:
@@ -177,26 +226,40 @@ class Library:
         """Every note placed on a 2D map by similarity. Recomputed only when the
         index changes, not per request."""
         with self._lock:
-            key = (self._version, width, height)
+            key = (self._version, frozenset(self._archived), width, height)
             if self._map_cache is None or self._map_cache[0] != key:
                 index = self._index
                 if index is None or not index.note_ids:
                     points = []
                 else:
                     points = map_layout(index.note_ids, index.vectors, width, height)
-                points = [p for p in points if p.note_id in self._cards]
+                points = [
+                    p for p in points
+                    if p.note_id in self._cards and p.note_id not in self._archived
+                ]
                 self._map_cache = (key, points)
             return list(self._map_cache[1])
 
     # --- search -----------------------------------------------------------------
 
-    def search(self, query: str, *, topic: str | None = None, limit: int = 10) -> list[Hit]:
+    def search(
+        self,
+        query: str,
+        *,
+        topic: str | None = None,
+        limit: int = 10,
+        include_archived: bool = False,
+        starred_only: bool = False,
+    ) -> list[Hit]:
         """Rank notes against `query`.
 
         With an explicit `topic`, only that topic's notes are ranked. Otherwise the
         query picks up to two topics it resembles; their notes rank first, and the
         rest of the vault fills the remaining slots. When no topic resembles the
         query well enough, it is a plain ranking over everything.
+
+        Archived notes are left out unless `include_archived`; `starred_only`
+        ranks just the starred ones.
         """
         query = (query or "").strip()
         if not query or limit <= 0:
@@ -204,7 +267,12 @@ class Library:
 
         with self._lock:
             index = self._index
-            cards = dict(self._cards)
+            cards = {
+                note_id: card
+                for note_id, card in self._cards.items()
+                if (include_archived or note_id not in self._archived)
+                and (not starred_only or note_id in self._starred)
+            }
         if index is None or not index.note_ids or index.vectors.size == 0:
             return []
 

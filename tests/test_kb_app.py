@@ -35,6 +35,7 @@ class McpAppTest(unittest.TestCase):
             {
                 "VAULT_PATH": str(self.root),
                 "KB_INDEX_DIR": str(base / "index"),
+                "KB_STATE_DB": str(base / "state.db"),
                 "KB_AUTH_TOKENS": TOKEN,
                 "KB_ALLOWED_HOSTS": "testserver",
             }
@@ -118,6 +119,7 @@ class McpAppTest(unittest.TestCase):
             {
                 "VAULT_PATH": str(self.root),
                 "KB_INDEX_DIR": str(self.settings.index_dir),
+                "KB_STATE_DB": str(self.settings.state_db),
                 "KB_AUTH_TOKENS": TOKEN,
                 "KB_WEB_ALLOW_UNAUTHENTICATED": "true",
             }

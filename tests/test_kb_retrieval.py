@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from second_brain.kb.retrieval import Library
+from second_brain.kb.state import NoteState
 from second_brain.kb.topics import Taxonomy, Topic
 from second_brain.vault import Vault
 from tests.kb_fixtures import FakeEmbedder, write_archive, write_note
@@ -221,6 +222,66 @@ class SearchTest(_Base):
         lib.search("two")
 
         self.assertEqual(len(self.embedder.passage_calls), 1)
+
+
+class NoteStateTest(_Base):
+    def setUp(self):
+        super().setUp()
+        self.state = NoteState(Path(self._tmp.name) / "state.db")
+        self.lib = self.library(state=self.state)
+
+    def test_archived_notes_leave_cards_search_and_the_map(self):
+        self.assertTrue(self.lib.set_archived("memory", True))
+
+        self.assertNotIn("memory", [c.note_id for c in self.lib.cards()])
+        self.assertIn("memory", [c.note_id for c in self.lib.cards(include_archived=True)])
+        found = [h.card.note_id for h in self.lib.search("vector memory agents")]
+        self.assertNotIn("memory", found)
+        found = [h.card.note_id for h in self.lib.search("vector memory agents", include_archived=True)]
+        self.assertEqual(found[0], "memory")
+        self.assertNotIn("memory", [p.note_id for p in self.lib.map_points(800, 500)])
+
+    def test_an_archived_note_still_resolves_by_id(self):
+        self.lib.set_archived("memory", True)
+        self.assertIsNotNone(self.lib.card("memory"))
+        self.assertTrue(self.lib.is_archived("memory"))
+
+    def test_unarchiving_brings_it_back(self):
+        self.lib.set_archived("memory", True)
+        self.lib.map_points(800, 500)
+        self.lib.set_archived("memory", False)
+        self.assertIn("memory", [c.note_id for c in self.lib.cards()])
+        self.assertIn("memory", [p.note_id for p in self.lib.map_points(800, 500)])
+
+    def test_starred_only_search(self):
+        self.lib.set_starred("k8s", True)
+        found = [h.card.note_id for h in self.lib.search("vector memory agents", starred_only=True)]
+        self.assertEqual(found, ["k8s"])
+        self.assertTrue(self.lib.is_starred("k8s"))
+
+    def test_flags_are_read_back_from_the_store(self):
+        self.lib.set_starred("rag", True)
+        self.lib.set_archived("k8s", True)
+        again = self.library(state=NoteState(self.state.path))
+        self.assertTrue(again.is_starred("rag"))
+        self.assertEqual([c.note_id for c in again.cards()], ["memory", "rag"])
+
+    def test_unknown_ids_are_never_written(self):
+        for note_id in ["nope", "../vault/memory", None, 3]:
+            with self.subTest(note_id=note_id):
+                self.assertFalse(self.lib.set_starred(note_id, True))
+                self.lib.record_read(note_id, "web")
+        self.assertEqual(self.state.starred(), set())
+        self.assertEqual(self.lib.read_stats(), {})
+
+    def test_reads_are_recorded_for_known_notes(self):
+        self.lib.record_read("rag", "mcp")
+        self.assertEqual(self.lib.read_stats()["rag"].mcp, 1)
+
+    def test_without_a_store_nothing_is_flagged(self):
+        lib = self.library()
+        self.assertFalse(lib.set_starred("rag", True))
+        self.assertEqual(lib.read_stats(), {})
 
 
 if __name__ == "__main__":
