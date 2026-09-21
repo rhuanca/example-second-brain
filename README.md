@@ -190,6 +190,14 @@ uv run python -m second_brain.kb.main                 # http://127.0.0.1:8765
   `ANTHROPIC_API_KEY` and sends only the matching note *summaries* (never full
   archives) to the Anthropic API per question; model and effort are
   `KB_CHAT_MODEL` / `KB_CHAT_EFFORT`. Everything else stays on the machine.
+- **Stars and archive.** On a note, ☆ **Star** marks it as especially good
+  (★ on its cards, a Starred strip on the home page, a Starred filter on
+  `/notes`); **Archive** hides it from lists, search, the map and chat without
+  deleting anything. `/archive` lists archived notes and suggests
+  **candidates**: notes over 90 days old, unstarred, and not read in 90 days on
+  the web or by an agent (`get_note` / `get_source`). Agents see `starred` in
+  search results and can search starred notes only, but cannot change either.
+  This lives in `KB_STATE_DB`, not in the notes: the vault stays read-only.
 - **Topics** come from `scripts/discover_topics.py` (see "Knowledge" below); until
   it has run, everything still works and notes show as "not in any topic".
 - New captures are picked up automatically (the index updates only what changed).
@@ -349,13 +357,14 @@ flowchart LR
 |---|---|
 | `main.py` → `rr-second-brain-telegram` | Capture. The only writer. |
 | `slack_main.py` → `rr-second-brain-slack` | Ask-only. A link here gets a nudge to use Telegram. |
-| `kb/main.py` → `rr-second-brain-kb` | MCP + browse UI on `127.0.0.1:8765`. Reads the vault (mounted read-only), writes only its index. |
+| `kb/main.py` → `rr-second-brain-kb` | MCP + browse UI on `127.0.0.1:8765`. Reads the vault (mounted read-only), writes only its index and state. |
 | Obsidian vault | Source of truth. Flat `*.md` + `sources/*.source.md` archives. |
 | `second_brain/kb/topics.json` | The taxonomy, versioned in git so drift is visible. |
 | `KB_INDEX_DIR` | Embedding vectors + manifest + the downloaded model. Derived, rebuildable, outside the vault. |
+| `KB_STATE_DB` | SQLite: stars, archive flags, read counts. Your data, **not** rebuildable: back it up with the vault. |
 | `scripts/*.py` | User-run maintenance (dedupe, flatten, discover topics, build index). Dry-run by default. |
 
-No database. At ~75 notes growing ~35/month, the corpus is ~26k words of notes
+No database for the notes themselves (only the small state file above). At ~75 notes growing ~35/month, the corpus is ~26k words of notes
 and ~233k of archives — it loads into memory in milliseconds, and the embedding
 matrix for 1,300 notes would be ~2 MB.
 
@@ -396,6 +405,7 @@ matrix for 1,300 notes would be ~2 MB.
   - `config.py` — its own narrow settings (no Telegram credentials)
   - `notes.py` — notes → cards; `topics.py` — topic discovery
   - `embeddings.py` — local embedding index; `retrieval.py` — `Library`: search + safe id lookups
+  - `state.py` — stars, archive flags and reads (SQLite, `KB_STATE_DB`)
   - `tools.py` — the five tools; `mcp_server.py` — MCP over streamable HTTP
   - `web.py` + `templates/` — browse UI, map, timeline; `visuals.py` — chart geometry and topic colours
   - `chat.py` + `static/chat.js` — chat with your notes; `auth.py` — bearer token / Access JWT
