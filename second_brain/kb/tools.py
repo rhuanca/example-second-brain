@@ -78,11 +78,22 @@ class KbTools:
         ]
 
     def search_notes(
-        self, query: str, topic: str | None = None, limit: int = 10
+        self,
+        query: str,
+        topic: str | None = None,
+        limit: int = 10,
+        starred_only: bool = False,
+        include_archived: bool = False,
     ) -> list[dict]:
         self.library.refresh_if_stale()
         limit = max(1, min(MAX_LIMIT, int(limit)))
-        hits = self.library.search(str(query or ""), topic=topic or None, limit=limit)
+        hits = self.library.search(
+            str(query or ""),
+            topic=topic or None,
+            limit=limit,
+            starred_only=bool(starred_only),
+            include_archived=bool(include_archived),
+        )
         return [
             {
                 "id": hit.card.note_id,
@@ -91,6 +102,7 @@ class KbTools:
                 "topics": self.library.topics_for(hit.card),
                 "source": hit.card.source,
                 "date": hit.card.date,
+                "starred": self.library.is_starred(hit.card.note_id),
                 "score": round(hit.score, 3),
             }
             for hit in hits
@@ -101,6 +113,8 @@ class KbTools:
         card = self.library.card(note_id)
         if card is None:
             return NOT_FOUND
+        # Returning a card from search is not reading it; fetching the note is.
+        self.library.record_read(card.note_id, "mcp")
         text = wrap_untrusted(card.note_id, "note", _render_card(card, self.library))
         if self.library.archive_text(card.note_id) is not None:
             text += f'\n\nFull text available: get_source("{card.note_id}")'
@@ -114,6 +128,7 @@ class KbTools:
         archive = self.library.archive_text(card.note_id)
         if archive is None:
             return NO_SOURCE
+        self.library.record_read(card.note_id, "mcp")
         return wrap_untrusted(card.note_id, "source", archive)
 
     def ask(self, question: str) -> str:
@@ -135,6 +150,16 @@ class KbTools:
 
 def _render_card(card: Card, library: Library) -> str:
     lines = [f"# {card.title}"]
+    marks = [
+        label
+        for label, on in [
+            ("starred by the reader", library.is_starred(card.note_id)),
+            ("archived", library.is_archived(card.note_id)),
+        ]
+        if on
+    ]
+    if marks:
+        lines.append(f"Status: {', '.join(marks)}")
     if card.source:
         lines.append(f"Source: {card.source}")
     if card.date:

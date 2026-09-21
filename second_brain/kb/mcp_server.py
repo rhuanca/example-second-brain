@@ -42,11 +42,21 @@ def build_mcp(tools: KbTools) -> MCPServer:
         return await run(tools.list_topics)
 
     @mcp.tool(annotations=_READ_ONLY)
-    async def search_notes(query: str, topic: str | None = None, limit: int = 10) -> list[dict]:
+    async def search_notes(
+        query: str,
+        topic: str | None = None,
+        limit: int = 10,
+        starred_only: bool = False,
+        include_archived: bool = False,
+    ) -> list[dict]:
         """Search notes by meaning. Returns cards (id, title, TL;DR, topics, source,
-        date, score) -- never full bodies. Pass `topic` (an id from list_topics) to
-        search within one topic. `limit` is capped at 25."""
-        return await run(tools.search_notes, query, topic, min(limit, MAX_LIMIT))
+        date, starred, score) -- never full bodies. Pass `topic` (an id from
+        list_topics) to search within one topic. `starred_only` searches just the
+        notes the reader starred as especially good. Archived (retired) notes are
+        left out unless `include_archived`. `limit` is capped at 25."""
+        return await run(
+            tools.search_notes, query, topic, min(limit, MAX_LIMIT), starred_only, include_archived
+        )
 
     # The text tools opt out of structured output: otherwise the SDK sends the same
     # text twice (content + structuredContent), doubling a ~4.7k-token archive.

@@ -6,6 +6,7 @@ from pathlib import Path
 from second_brain.ask import AskError
 from second_brain.kb.config import KbSettings
 from second_brain.kb.retrieval import Library
+from second_brain.kb.state import NoteState
 from second_brain.kb.tools import (
     NO_SOURCE,
     NOT_FOUND,
@@ -48,6 +49,7 @@ class _Base(unittest.TestCase):
             base / "index",
             FakeEmbedder(),
             taxonomy_loader=lambda: self.taxonomy,
+            state=NoteState(base / "state.db"),
         )
         self.answers = []
         self.tools = KbTools(
@@ -83,7 +85,7 @@ class SearchNotesTest(_Base):
         self.assertEqual(results[0]["id"], "memory")
         self.assertEqual(
             set(results[0]),
-            {"id", "title", "tldr", "topics", "source", "date", "score"},
+            {"id", "title", "tldr", "topics", "source", "date", "starred", "score"},
         )
         serialized = json.dumps(results)
         self.assertNotIn("episodic memory", serialized)  # key point
@@ -105,6 +107,41 @@ class SearchNotesTest(_Base):
         results = self.tools.search_notes("kubernetes", topic="agents")
         self.assertEqual([r["id"] for r in results], ["memory"])
         self.assertEqual(results[0]["topics"], ["agents"])
+
+    def test_starred_only_and_the_starred_field(self):
+        self.library.refresh_if_stale()
+        self.library.set_starred("k8s", True)
+        results = self.tools.search_notes("agent memory", starred_only=True)
+        self.assertEqual([(r["id"], r["starred"]) for r in results], [("k8s", True)])
+        self.assertFalse(self.tools.search_notes("agent memory")[0]["starred"])
+
+    def test_archived_notes_only_on_request(self):
+        self.library.refresh_if_stale()
+        self.library.set_archived("memory", True)
+        self.assertNotIn("memory", [r["id"] for r in self.tools.search_notes("agent memory")])
+        found = self.tools.search_notes("agent memory", include_archived=True)
+        self.assertEqual(found[0]["id"], "memory")
+
+    def test_search_is_not_a_read(self):
+        self.tools.search_notes("agent memory")
+        self.assertEqual(self.library.read_stats(), {})
+
+
+class ReadTrackingTest(_Base):
+    def test_get_note_and_get_source_count_as_agent_reads(self):
+        self.tools.get_note("memory")
+        self.tools.get_source("memory")
+        self.tools.get_source("k8s")  # no archive: nothing was read
+        self.tools.get_note("nope")
+        stats = self.library.read_stats()
+        self.assertEqual((stats["memory"].mcp, stats["memory"].web), (2, 0))
+        self.assertEqual(set(stats), {"memory"})
+
+    def test_get_note_shows_the_readers_marks(self):
+        self.assertNotIn("Status:", self.tools.get_note("memory"))
+        self.library.set_starred("memory", True)
+        self.library.set_archived("memory", True)
+        self.assertIn("Status: starred by the reader, archived", self.tools.get_note("memory"))
 
 
 class GetNoteTest(_Base):
