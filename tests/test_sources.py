@@ -109,6 +109,64 @@ class DispatchTest(unittest.TestCase):
         self.assertEqual(article.text, "teaser body")
         self.assertNotIn("medium", calls)  # cookie missing → no cookie fetch
 
+    def test_medium_failure_falls_through_to_jina(self):
+        """The regression this chain exists for: Medium began answering plain HTTP
+        clients with a bot challenge, and a set cookie used to end the attempt there."""
+        def blocked(url, cookie):
+            raise FetchError(f"Could not download the page at {url}")
+
+        article = fetch(
+            "https://medium.com/@u/slug-123",
+            medium_cookie="SID",
+            jina_api_key="K",
+            medium_fetch=blocked,
+            jina_fetch=lambda url, api_key=None: Article("full", "jina body"),
+            article_fetch=lambda url: Article("teaser", "teaser body"),
+        )
+        self.assertEqual(article.text, "jina body")
+
+    def test_every_route_failing_raises_the_last_error(self):
+        def blocked(url, cookie):
+            raise FetchError("medium blocked")
+
+        def jina_down(url, api_key=None, cookie=None):
+            raise FetchError("jina down")
+
+        def trafilatura_down(url):
+            raise FetchError("trafilatura down")
+
+        with self.assertRaises(FetchError) as caught:
+            fetch(
+                "https://medium.com/@u/slug-123",
+                medium_cookie="SID",
+                jina_api_key="K",
+                medium_fetch=blocked,
+                jina_fetch=jina_down,
+                article_fetch=trafilatura_down,
+            )
+        self.assertIn("trafilatura down", str(caught.exception))
+
+    def test_the_session_cookie_never_reaches_the_reader_service(self):
+        """The cookie is a full Medium login: only the local route may use it."""
+        seen = {}
+
+        def blocked(url, cookie):
+            raise FetchError("blocked")
+
+        def jina(url, **kwargs):
+            seen.update(kwargs)
+            return Article("p", "b")
+
+        fetch(
+            "https://medium.com/@u/slug-123",
+            medium_cookie="SID",
+            jina_api_key="K",
+            medium_fetch=blocked,
+            jina_fetch=jina,
+        )
+        self.assertEqual(set(seen), {"api_key"})
+        self.assertNotIn("SID", str(seen))
+
 
 if __name__ == "__main__":
     unittest.main()

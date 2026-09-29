@@ -18,3 +18,11 @@ dependencies = [
     "uvicorn>=0.52.4",
     "youtube-transcript-api>=1.2.4",
 ]
+
+[project.optional-dependencies]
+# Browser-fingerprint downloads for sites that refuse plain HTTP clients
+# (Medium). An extra, not a base dependency: only the capture host needs it,
+# and it ships a compiled curl. `deploy.sh` installs it; `uv sync` alone does not.
+browser = [
+    "curl-cffi>=0.7",
+]

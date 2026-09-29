@@ -1,7 +1,21 @@
 """Dispatch a URL to the right adapter: YouTube, Medium (cookie), or web article.
 
-Web articles go through Jina Reader (Markdown + image captions) by default, with
-trafilatura as the fallback. YouTube and Medium(+cookie) have dedicated paths.
+YouTube has its own path (a transcript, not a page). Everything else is tried in
+order of how much it can recover, falling through on failure:
+
+  1. Medium + cookie   member-only HTML, rendered locally with a browser TLS
+                       fingerprint (see `medium.py`)
+  2. Jina Reader       Markdown + image captions, when a key is set
+  3. trafilatura       no key, no service; the floor
+
+The session cookie is used only by route 1, which runs on this machine. It is a
+full Medium login, so it is never forwarded to Jina or any other service; what
+route 2 recovers for a member-only article is the public teaser.
+
+Falling through matters: Medium began serving a Cloudflare challenge to plain
+HTTP clients, and when the cookie path raised straight to the caller a set
+`MEDIUM_COOKIE` turned every Medium link into "could not download" -- the one
+route that still worked was never tried.
 """
 
 from __future__ import annotations
@@ -29,18 +43,22 @@ def fetch(
 ) -> Article:
     """Return an Article (canonical Markdown) for `url`, routing by source.
 
-    YouTube → transcript. Medium(+cookie) → cookie fetch. Everything else → Jina
-    Reader (Markdown + image captions) when enabled AND a JINA_API_KEY is set —
-    captions require a key — falling back to trafilatura otherwise or on failure.
+    Raises the last route's FetchError if every route fails.
     """
     if is_youtube_url(url):
         return youtube_fetch(url, api_key=supadata_api_key)
-    if medium_cookie and is_medium_url(url):
-        return medium_fetch(url, medium_cookie)
 
+    cookie = medium_cookie if medium_cookie and is_medium_url(url) else None
+    routes = []
+    if cookie:
+        routes.append(lambda: medium_fetch(url, cookie))
     if jina_enabled and jina_api_key:
+        routes.append(lambda: jina_fetch(url, api_key=jina_api_key))
+    routes.append(lambda: article_fetch(url))
+
+    for route in routes[:-1]:
         try:
-            return jina_fetch(url, api_key=jina_api_key)
+            return route()
         except FetchError:
-            pass  # fall back to trafilatura
-    return article_fetch(url)
+            continue  # the next route may still reach it
+    return routes[-1]()

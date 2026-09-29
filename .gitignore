@@ -27,6 +27,14 @@ __pycache__/
 .diagrams/*.png
 .diagrams/*.json
 
+# Editor leftovers. These matter as much as the secret files themselves: an
+# editor drops a swap/backup file beside the file it is editing, holding the
+# same contents under a name the secret's own rule does not match — which is how
+# a `git add -A` can commit credentials that looked ignored.
+*.swp
+*.swo
+*~
+
 # OS
 .DS_Store
 

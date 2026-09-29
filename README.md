@@ -69,15 +69,25 @@ You'll get a summary reply, and a note will appear under
 - **Medium links** work out of the box for free posts. For **member-only**
   articles, set `MEDIUM_COOKIE` (see below) so the bot fetches the full text you
   pay for; without it, member-only links only yield the public teaser.
+- **If a route fails, the next one is tried** — Medium's cookie fetch, then Jina,
+  then trafilatura — so one blocked download never costs you the capture.
 
 ### Medium member-only articles
 
 Set `MEDIUM_COOKIE` to the value of your `sid` cookie on `medium.com`
 (browser DevTools → Application → Cookies → `medium.com` → `sid`). The bot then
 downloads member-only articles as the logged-in you and summarizes the full text.
-Treat it like a password: it's read from `.env` (gitignored) and only sent to
-Medium. The session expires periodically — when member-only notes start coming
-back as teasers, paste a fresh cookie. Only `medium.com` / `*.medium.com` URLs are
+Treat it like a password — it is a **full login**, not a scoped token. It is read
+from `.env` (gitignored), used only by the local fetch, and sent only to Medium:
+never to Jina or any other reader service, which is why that fetch renders here
+rather than delegating. The session expires periodically — when member-only notes
+start coming back as teasers, paste a fresh cookie.
+
+Medium now answers plain HTTP clients with a bot challenge that rejects them
+*before* reading the cookie, so this fetch uses `curl_cffi` to present a real
+Chrome TLS fingerprint. That is the **`browser` extra**, which `./deploy.sh`
+installs (`uv sync --extra browser`); a plain `uv sync` leaves it out, and Medium
+capture then falls back to the teaser with a message saying how to install it. Only `medium.com` / `*.medium.com` URLs are
 recognized; Medium publications on custom domains fall back to the normal fetch.
 
 ## Notes & tags

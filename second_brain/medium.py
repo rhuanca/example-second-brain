@@ -4,18 +4,30 @@ The paywall only gates the *download* — once we retrieve the full HTML (by sen
 the paying member's `sid` cookie), the normal trafilatura extraction in
 `fetcher.fetch` handles the rest. So this module just supplies a cookie-aware
 downloader and delegates.
+
+Medium now sits behind a bot challenge that answers plain HTTP clients with a 403
+*before* it looks at any cookie, so `requests` cannot get in whatever headers it
+sends: the check reads the TLS handshake, not the User-Agent. `curl_cffi` replays
+a real Chrome fingerprint, which gets through.
+
+The rendering happens here, on this machine, precisely so the session cookie stays
+here. It is a full Medium login, not a scoped token, so it is never handed to a
+third-party reader service.
 """
 
 from __future__ import annotations
 
 from urllib.parse import urlsplit
 
-from second_brain.fetcher import Article
+from second_brain.fetcher import Article, FetchError
 from second_brain.fetcher import fetch as _article_fetch
 
-_UA = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/124.0 Safari/537.36"
+# A browser profile curl_cffi knows how to impersonate, TLS fingerprint included.
+IMPERSONATE = "chrome"
+
+MISSING_DEPENDENCY = (
+    "Medium capture needs the browser-impersonation extra. "
+    "Install it on the server with: uv sync --extra browser"
 )
 
 
@@ -44,22 +56,28 @@ def _cookie_downloader(cookie: str, get=None):
     def download(url: str):
         getter = get or _default_get
         try:
-            resp = getter(
-                url,
-                cookies={"sid": cookie},
-                headers={"User-Agent": _UA},
-                timeout=20,
-            )
+            resp = getter(url, cookies={"sid": cookie}, timeout=30)
             resp.raise_for_status()
             return resp.text
+        except FetchError:
+            raise  # a missing dependency is worth saying out loud
         except Exception:
-            # Downstream fetcher.fetch turns a falsy result into a clear FetchError.
+            # Downstream fetcher.fetch turns a falsy result into a clear FetchError,
+            # and sources.fetch then tries the next route.
             return None
 
     return download
 
 
 def _default_get(url: str, **kwargs):
-    import requests
+    """Download as Chrome would — same TLS handshake, not just the same header.
 
-    return requests.get(url, **kwargs)
+    Headers come from the impersonated profile, so none are set here: a
+    hand-written User-Agent that disagrees with the handshake is itself a tell.
+    """
+    try:
+        from curl_cffi import requests as browser
+    except ImportError as exc:
+        raise FetchError(MISSING_DEPENDENCY) from exc
+
+    return browser.get(url, impersonate=IMPERSONATE, **kwargs)

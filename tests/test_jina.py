@@ -17,7 +17,7 @@ class FetchJinaTest(unittest.TestCase):
             seen.update(url=url, **kwargs)
             return _resp(data={"title": "My Post", "content": "# md\n![Image 1: a chart](x)"})
 
-        art = fetch_jina("https://example.com/post", get=fake_get)
+        art = fetch_jina("https://example.com/post", api_key="KEY", get=fake_get)
         self.assertIsInstance(art, Article)
         self.assertEqual(art.title, "My Post")
         self.assertIn("Image 1: a chart", art.text)
@@ -42,6 +42,16 @@ class FetchJinaTest(unittest.TestCase):
             get=lambda url, **k: seen.update(k) or _resp(data={"content": "x"}),
         )
         self.assertNotIn("Authorization", seen["headers"])
+
+    def test_captions_are_only_requested_with_a_key(self):
+        # Asking for generated alt text without a key fails the whole request (401),
+        # so a keyless read must not ask for it.
+        seen = {}
+        fetch_jina(
+            "https://example.com/post",
+            get=lambda url, **k: seen.update(k) or _resp(data={"content": "x"}),
+        )
+        self.assertNotIn("X-With-Generated-Alt", seen["headers"])
 
     def test_http_error_raises(self):
         with self.assertRaises(FetchError):
