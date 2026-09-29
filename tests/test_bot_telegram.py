@@ -78,6 +78,23 @@ class AllowListTest(unittest.TestCase):
         asyncio.run(handler(update, None))
         self.assertIn("typing", message.chat.actions)
 
+    def test_a_failing_indicator_is_logged_but_never_breaks_the_reply(self):
+        """Cosmetic, so it is swallowed -- but silence would make a missing
+        indicator impossible to tell from one that was never attempted."""
+        handler = make_handler(self.settings, self.vault)
+        update, message = _update(42, "no link here")
+
+        async def refuses(action):
+            raise RuntimeError("Bad Gateway")
+
+        message.chat.send_action = refuses
+        with self.assertLogs("second_brain.bot", level="WARNING") as logged:
+            asyncio.run(handler(update, None))
+
+        self.assertEqual(message.replies, [NO_URL_MESSAGE])  # the reply still lands
+        self.assertIn("RuntimeError", logged.output[0])
+        self.assertIn("Bad Gateway", logged.output[0])
+
     def test_handler_ignores_other_users(self):
         handler = make_handler(self.settings, self.vault)
         update, message = _update(99, "no link here")

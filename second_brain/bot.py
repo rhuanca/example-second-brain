@@ -11,6 +11,7 @@ import asyncio
 import contextlib
 import datetime as _dt
 import functools
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,6 +23,8 @@ from second_brain.summarizer import SummarizerError
 from second_brain.summarizer import summarize as default_summarize
 from second_brain.urls import extract_url
 from second_brain.vault import DuplicateNoteError, Vault
+
+logger = logging.getLogger(__name__)
 
 NO_URL_MESSAGE = (
     "Send me a link (http/https) and I'll summarize it and file it in your "
@@ -127,15 +130,20 @@ _TYPING_REFRESH_SECONDS = 4  # Telegram's typing indicator lasts ~5s; refresh it
 
 
 async def _send_typing(message) -> None:
-    """Show the 'typing…' chat action. Best-effort — never fails the request."""
+    """Show the 'typing…' chat action. Best-effort — never fails the request.
+
+    Cosmetic, so a failure is swallowed -- but it is logged, because a silently
+    missing indicator is indistinguishable from one that was never sent.
+    """
     chat = getattr(message, "chat", None)
     send = getattr(chat, "send_action", None)
     if send is None:
+        logger.warning("no typing indicator: %s has no send_action", type(chat).__name__)
         return
     try:
         await send("typing")
-    except Exception:  # noqa: BLE001 — feedback is cosmetic
-        pass
+    except Exception as exc:  # noqa: BLE001 — feedback is cosmetic
+        logger.warning("typing indicator failed: %s: %s", type(exc).__name__, exc)
 
 
 async def _run_with_typing(message, work):
