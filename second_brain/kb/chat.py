@@ -5,9 +5,11 @@ matching notes' summaries (never the full archives) go to Claude with the
 conversation. The answer streams back as events the browser renders as it
 arrives, and cites notes as `[[note-id]]`, which become links.
 
-The server is stateless: the browser sends the conversation each time, including
-which notes earlier answers used, so a follow-up like "which one had code
-examples?" still has those notes in hand.
+The conversation is the server's: the browser sends one question and the id of
+the chat it belongs to, and the turns are rebuilt from `ChatStore`. That keeps one
+source of truth -- a chat survives the tab, and the notes an earlier answer used
+come from storage rather than from the client, so a follow-up like "which one had
+code examples?" still has those notes in hand.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ import re
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 
+from second_brain.kb.chats import ERROR, ChatStore
 from second_brain.kb.config import KbSettings
 from second_brain.kb.notes import Card
 from second_brain.kb.retrieval import Library
@@ -69,27 +72,37 @@ class ChatTurn:
     source_ids: list[str] = field(default_factory=list)
 
 
-def parse_turns(payload: object) -> list[ChatTurn]:
-    """Validate the browser's conversation. Keeps the last MAX_TURNS turns."""
-    if not isinstance(payload, dict) or not isinstance(payload.get("messages"), list):
-        raise ChatError("expected {\"messages\": [...]}")
-    turns = []
-    for item in payload["messages"][-MAX_TURNS:]:
-        if not isinstance(item, dict):
-            raise ChatError("each message must be an object")
-        role, content = item.get("role"), item.get("content")
-        if role not in ("user", "assistant") or not isinstance(content, str):
-            raise ChatError("each message needs a role (user/assistant) and text content")
-        if len(content) > MAX_CHARS:
-            raise ChatError(f"messages are limited to {MAX_CHARS:,} characters")
-        ids = item.get("source_ids") or []
-        if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
-            raise ChatError("source_ids must be a list of note ids")
-        turns.append(ChatTurn(role, content.strip(), ids[:MAX_SOURCE_IDS]))
-    turns = [t for t in turns if t.content]
-    if not turns or turns[-1].role != "user":
-        raise ChatError("the conversation must end with a question")
-    return turns
+def parse_ask(payload: object) -> tuple[str | None, str]:
+    """Validate a request: which chat (if any) and the new question."""
+    if not isinstance(payload, dict):
+        raise ChatError('expected {"message": "...", "conversation_id": "..."}')
+    question = payload.get("message")
+    if not isinstance(question, str) or not question.strip():
+        raise ChatError("send a question in \"message\"")
+    if len(question) > MAX_CHARS:
+        raise ChatError(f"messages are limited to {MAX_CHARS:,} characters")
+    conversation_id = payload.get("conversation_id")
+    if conversation_id is not None and not isinstance(conversation_id, str):
+        raise ChatError("conversation_id must be a string")
+    return conversation_id or None, question.strip()
+
+
+def turns_for(store: ChatStore, conversation_id: str | None, question: str) -> list[ChatTurn]:
+    """The conversation as the model sees it: stored turns, then the new question.
+
+    Failed answers are left out -- they are shown in the page but were never an
+    answer -- and only the last MAX_TURNS are carried.
+    """
+    turns: list[ChatTurn] = []
+    saved = store.get(conversation_id) if conversation_id else None
+    if saved is not None:
+        for message in saved.messages:
+            if not message.content or message.status == ERROR:
+                continue
+            ids = message.cited or message.source_ids
+            turns.append(ChatTurn(message.role, message.content, list(ids[:MAX_SOURCE_IDS])))
+    turns.append(ChatTurn("user", question))
+    return turns[-MAX_TURNS:]
 
 
 def gather_notes(library: Library, turns: list[ChatTurn]) -> list[Card]:

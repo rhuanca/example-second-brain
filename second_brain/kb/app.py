@@ -20,6 +20,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from second_brain.kb.auth import AccessVerifier, McpAuthMiddleware, WebAuthMiddleware
+from second_brain.kb.chats import ChatStore
 from second_brain.kb.config import KbSettings
 from second_brain.kb.embeddings import MODELS_DIR, Embedder, FastEmbedder
 from second_brain.kb.mcp_server import build_mcp, http_app
@@ -40,6 +41,7 @@ def create_app(
     answer: Callable[..., str] | None = None,
     access_verifier: AccessVerifier | None = None,
     chat_client=None,
+    chats: ChatStore | None = None,
 ) -> FastAPI:
     """Build the service. Collaborators are injectable for tests."""
     if library is None:
@@ -53,6 +55,7 @@ def create_app(
             state=NoteState(settings.state_db),
         )
 
+    chats = chats or ChatStore(settings.state_db)
     tools = KbTools(library, settings=settings, **({"answer": answer} if answer else {}))
     mcp = build_mcp(tools)
     mcp_app = http_app(mcp, settings)  # must exist before session_manager is used
@@ -76,7 +79,7 @@ def create_app(
             settings.cf_access_team_domain, settings.cf_access_aud
         )
 
-    app.include_router(build_router(library, settings, chat_client=chat_client))
+    app.include_router(build_router(library, settings, chat_client=chat_client, chats=chats))
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     app.mount("/", mcp_app)
     # Each middleware guards its own paths: bearer token for /mcp, Access for the rest.

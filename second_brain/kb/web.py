@@ -23,7 +23,8 @@ from fastapi.templating import Jinja2Templates
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from second_brain.kb.auth import is_mcp_path
-from second_brain.kb.chat import ChatError, gather_notes, parse_turns, stream_answer
+from second_brain.kb.chat import ChatError, gather_notes, parse_ask, stream_answer, turns_for
+from second_brain.kb.chats import DONE, ERROR, STOPPED, ChatStore, title_from
 from second_brain.kb.config import KbSettings
 from second_brain.kb.notes import Card
 from second_brain.kb.retrieval import Library
@@ -88,7 +89,11 @@ SECURITY_HEADERS = [
 
 
 def build_router(
-    library: Library, settings: KbSettings | None = None, *, chat_client=None
+    library: Library,
+    settings: KbSettings | None = None,
+    *,
+    chat_client=None,
+    chats: ChatStore | None = None,
 ) -> APIRouter:
     router = APIRouter()
 
@@ -306,8 +311,7 @@ def build_router(
             undated=sum(1 for c in cards if not month_of(c)),
         )
 
-    @router.get("/chat", response_class=HTMLResponse)
-    def chat_page(request: Request):
+    def _chat_page(request: Request, conversation=None):
         library.refresh_if_stale()
         topics = library.topics()
         suggestions = ["What have I saved recently that's worth revisiting?"]
@@ -320,7 +324,72 @@ def build_router(
             active="/chat",
             enabled=bool(settings and settings.anthropic_api_key),
             suggestions=suggestions,
+            conversation=conversation,
+            saved=[
+                {"id": c.id, "title": c.title, "when": _day(c.updated_at),
+                 "active": conversation is not None and c.id == conversation.id}
+                for c in (chats.recent() if chats else [])
+            ],
         )
+
+    @router.get("/chat", response_class=HTMLResponse)
+    def chat_page(request: Request):
+        return _chat_page(request)
+
+    @router.get("/chat/{conversation_id}", response_class=HTMLResponse)
+    def saved_chat_page(request: Request, conversation_id: str):
+        conversation = chats.get(conversation_id) if chats else None
+        if conversation is None:
+            return not_found(request)
+        return _chat_page(request, conversation)
+
+    @router.get("/api/chats/{conversation_id}")
+    def chat_messages(request: Request, conversation_id: str):
+        """The stored conversation, which the page hydrates from. Kept out of the
+        page itself because the CSP allows no inline script."""
+        conversation = chats.get(conversation_id) if chats else None
+        if conversation is None:
+            return JSONResponse({"error": "No such chat."}, status_code=404)
+        slots = topic_slots(library.topics())
+        return JSONResponse(
+            {
+                "id": conversation.id,
+                "title": conversation.title,
+                "messages": [
+                    {
+                        "role": message.role,
+                        "content": message.content,
+                        "status": message.status,
+                        "cited": message.cited,
+                        "notes": [
+                            _chat_card(card, library, slots)
+                            for note_id in message.source_ids
+                            if (card := library.card(note_id)) is not None
+                        ],
+                    }
+                    for message in conversation.messages
+                ],
+            }
+        )
+
+    @router.post("/chat/{conversation_id}/rename")
+    async def rename_chat(request: Request, conversation_id: str):
+        form = await _form(request)
+        if isinstance(form, HTMLResponse):
+            return form
+        title = (form.get("title") or [""])[0]
+        if not chats or not chats.rename(conversation_id, title):
+            return not_found(request)
+        return RedirectResponse(f"/chat/{quote(conversation_id)}", status_code=303)
+
+    @router.post("/chat/{conversation_id}/delete")
+    async def delete_chat(request: Request, conversation_id: str):
+        form = await _form(request)
+        if isinstance(form, HTMLResponse):
+            return form
+        if not chats or not chats.delete(conversation_id):
+            return not_found(request)
+        return RedirectResponse("/chat", status_code=303)
 
     @router.post("/api/chat")
     async def chat_api(request: Request):
@@ -336,25 +405,56 @@ def build_router(
                 {"error": "Chat needs ANTHROPIC_API_KEY to be set for the knowledge base."},
                 status_code=503,
             )
+        if chats is None:
+            return JSONResponse({"error": "Chat storage is unavailable."}, status_code=503)
         try:
-            turns = parse_turns(await request.json())
+            conversation_id, question = parse_ask(await request.json())
         except (ChatError, ValueError) as exc:
             message = str(exc) if isinstance(exc, ChatError) else "Send valid JSON."
             return JSONResponse({"error": message}, status_code=400)
+
+        turns = turns_for(chats, conversation_id, question)
+        if conversation_id is None or chats.get(conversation_id) is None:
+            conversation_id = chats.create(title_from(question))
+        title = chats.get(conversation_id).title
+        chats.append(conversation_id, "user", question)
 
         def events():
             library.refresh_if_stale()
             slots = topic_slots(library.topics())
             cards = gather_notes(library, turns)
-            for event in stream_answer(
-                turns,
-                cards,
-                library=library,
-                settings=settings,
-                describe=lambda card: _chat_card(card, library, slots),
-                client=chat_client,
-            ):
-                yield json.dumps(event) + "\n"
+            yield json.dumps(
+                {"type": "conversation", "id": conversation_id, "title": title}
+            ) + "\n"
+
+            written, cited, status = [], [], STOPPED
+            try:
+                for event in stream_answer(
+                    turns,
+                    cards,
+                    library=library,
+                    settings=settings,
+                    describe=lambda card: _chat_card(card, library, slots),
+                    client=chat_client,
+                ):
+                    if event["type"] == "delta":
+                        written.append(event["text"])
+                    elif event["type"] == "done":
+                        cited, status = event["cited"], DONE
+                    elif event["type"] == "error":
+                        status = ERROR
+                    yield json.dumps(event) + "\n"
+            finally:
+                # Also runs when the browser disconnects (Stop), so a partial
+                # answer is kept rather than lost.
+                chats.append(
+                    conversation_id,
+                    "assistant",
+                    "".join(written),
+                    source_ids=[card.note_id for card in cards],
+                    cited=cited,
+                    status=status,
+                )
 
         return StreamingResponse(
             events(),
@@ -427,14 +527,20 @@ def build_router(
     async def archive(request: Request, note_id: str):
         return await _flag(request, note_id, library.set_archived)
 
-    async def _flag(request: Request, note_id: str, setter):
-        """A plain form POST (no script needed), answered with a redirect back."""
+    async def _form(request: Request):
+        """A posted form, or the HTMLResponse to return instead."""
         if not _same_origin(request):
             return HTMLResponse("Cross-origin requests are not allowed.", status_code=403)
         length = request.headers.get("content-length") or "0"
         if not length.isdigit() or int(length) > MAX_FORM_BODY:
             return HTMLResponse("Request too large.", status_code=413)
-        form = parse_qs((await request.body()).decode("utf-8", "replace"))
+        return parse_qs((await request.body()).decode("utf-8", "replace"))
+
+    async def _flag(request: Request, note_id: str, setter):
+        """A plain form POST (no script needed), answered with a redirect back."""
+        form = await _form(request)
+        if isinstance(form, HTMLResponse):
+            return form
         on = form.get("on", ["1"])[0] == "1"
         card = library.card(note_id)
         if card is None or not setter(card.note_id, on):

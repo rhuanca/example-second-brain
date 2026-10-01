@@ -8,14 +8,14 @@
 (() => {
   "use strict";
 
-  const STORAGE_KEY = "kb-chat-v1";
+  const root = document.getElementById("chat-root");
   const log = document.getElementById("chat-log");
   const form = document.getElementById("chat-form");
   const input = document.getElementById("chat-input");
   const send = document.getElementById("send");
   const stop = document.getElementById("stop");
-  const newChat = document.getElementById("new-chat");
   const welcome = document.getElementById("welcome");
+  const pastList = document.getElementById("past-list");
   const NOTE_ID = /^[A-Za-z0-9._-]+$/;
   const ICON_PATHS = {
     youtube: "M4 7a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3z M10 9.2v5.6l4.8-2.8z",
@@ -23,24 +23,47 @@
   };
 
   // { role, content, source_ids, notes, cited, error }
-  let history = load();
+  // The server stores the conversation; this is just what is on screen.
+  let history = [];
+  let conversationId = root.dataset.conversation || null;
   let controller = null;
 
-  // --- persistence (per tab; the page works without it) ---------------------
-  function load() {
+  // --- loading a saved chat -----------------------------------------------------
+  async function hydrate() {
+    if (!conversationId) return;
     try {
-      const saved = JSON.parse(sessionStorage.getItem(STORAGE_KEY) || "[]");
-      return Array.isArray(saved) ? saved : [];
+      const response = await fetch("/api/chats/" + encodeURIComponent(conversationId));
+      if (!response.ok) return;
+      const saved = await response.json();
+      history = (saved.messages || []).map((m) => ({
+        role: m.role,
+        content: m.content || "",
+        notes: Array.isArray(m.notes) ? m.notes : [],
+        cited: Array.isArray(m.cited) ? m.cited : [],
+        source_ids: (Array.isArray(m.notes) ? m.notes : []).map((n) => n.id),
+        done: m.role === "assistant",
+        error: m.status === "error" ? "That answer failed." : undefined,
+        stopped: m.status === "stopped",
+      }));
+      renderAll();
     } catch (_) {
-      return [];
+      /* a failed hydrate leaves an empty chat, which still works */
     }
   }
-  function save() {
-    try {
-      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(history));
-    } catch (_) {
-      /* storage unavailable: keep going in memory */
-    }
+
+  function rememberChat(id, title) {
+    conversationId = id;
+    // Keep the address bar on this chat, so a reload or bookmark reopens it.
+    window.history.replaceState({}, "", "/chat/" + encodeURIComponent(id));
+    if (!pastList || pastList.querySelector('a[href="/chat/' + id + '"]')) return;
+    const item = el("li");
+    const link = el("a");
+    link.href = "/chat/" + encodeURIComponent(id);
+    link.setAttribute("aria-current", "page");
+    link.appendChild(el("span", "t", title || "New chat"));
+    link.appendChild(el("span", "when", "just now"));
+    item.appendChild(link);
+    pastList.prepend(item);
   }
 
   // --- DOM helpers --------------------------------------------------------------
@@ -214,6 +237,7 @@
     } else {
       renderMarkdown(view.body, turn.content, notesById);
       if (turn.truncated) view.body.appendChild(el("p", "msg-note", "(The answer was cut off.)"));
+      if (turn.stopped) view.body.appendChild(el("p", "msg-note", "(Stopped.)"));
     }
     if (turn.done || turn.error) renderSources(view.sources, turn.notes, turn.cited);
   }
@@ -221,7 +245,6 @@
   function renderAll() {
     log.querySelectorAll(".msg-user, .msg-assistant").forEach((n) => n.remove());
     welcome.hidden = history.length > 0;
-    newChat.hidden = history.length === 0;
     for (const turn of history) renderTurn(turn);
   }
 
@@ -232,13 +255,11 @@
     input.disabled = busy;
   }
 
-  function payload() {
-    // Failed answers are shown but never sent back to the model.
-    return {
-      messages: history
-        .filter((t) => !t.error && t.content)
-        .map((t) => ({ role: t.role, content: t.content, source_ids: t.cited && t.cited.length ? t.cited : (t.source_ids || []) })),
-    };
+  function payload(question) {
+    // The server holds the conversation; this sends only the new question.
+    return conversationId
+      ? { conversation_id: conversationId, message: question }
+      : { message: question };
   }
 
   async function ask(question) {
@@ -248,7 +269,6 @@
     const turn = { role: "assistant", content: "", notes: [], cited: [], source_ids: [] };
     history.push(turn);
     welcome.hidden = true;
-    newChat.hidden = false;
     renderTurn(history[history.length - 2]);
     const view = renderTurn(turn);
     view.wrap.scrollIntoView({ block: "end", behavior: "smooth" });
@@ -266,7 +286,7 @@
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload()),
+        body: JSON.stringify(payload(question)),
         signal: controller.signal,
       });
       if (!response.ok || !response.body) {
@@ -287,6 +307,10 @@
           buffer = buffer.slice(newline + 1);
           if (!line) continue;
           const event = JSON.parse(line);
+          if (event.type === "conversation") {
+            rememberChat(String(event.id || ""), String(event.title || ""));
+            continue;
+          }
           if (event.type === "sources") {
             turn.notes = Array.isArray(event.notes) ? event.notes : [];
             turn.source_ids = turn.notes.map((n) => n.id);
@@ -309,7 +333,6 @@
       controller = null;
       setBusy(false);
       updateAssistant(view, turn);
-      save();
       input.focus();
     }
   }
@@ -334,16 +357,10 @@
   }
   input.addEventListener("input", autosize);
   stop.addEventListener("click", () => controller && controller.abort());
-  newChat.addEventListener("click", () => {
-    if (controller) controller.abort();
-    history = [];
-    save();
-    renderAll();
-    input.focus();
-  });
   document.querySelectorAll(".suggestion").forEach((button) => {
     button.addEventListener("click", () => ask(button.dataset.prompt || ""));
   });
 
   renderAll();
+  hydrate();
 })();

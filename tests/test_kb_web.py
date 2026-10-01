@@ -11,6 +11,7 @@ from second_brain.kb.app import create_app
 from second_brain.kb.auth import AccessVerifier
 from second_brain.kb.config import KbSettings
 from second_brain.kb.retrieval import Library
+from second_brain.kb.chats import ChatStore
 from second_brain.kb.state import NoteState
 from second_brain.kb.topics import Taxonomy, Topic
 from second_brain.vault import Vault
@@ -42,6 +43,7 @@ class _Vault(unittest.TestCase):
         (base / "secret.md").write_text("SECRET", encoding="utf-8")
         self.now = dt.datetime(2026, 9, 21, 12, 0).timestamp()
         self.state = NoteState(base / "state.db", clock=lambda: self.now)
+        self.chats = ChatStore(base / "state.db", clock=lambda: self.now)
 
         write_note(
             self.root,
@@ -88,7 +90,7 @@ class _Vault(unittest.TestCase):
             taxonomy_loader=lambda: self.taxonomy,
             state=self.state,
         )
-        app = create_app(settings, library=library, access_verifier=verifier)
+        app = create_app(settings, library=library, access_verifier=verifier, chats=self.chats)
         return TestClient(app)
 
 
@@ -381,6 +383,85 @@ class ArchiveCandidatesTest(unittest.TestCase):
         self.assertEqual(
             [c.note_id for c in picked], ["never-older", "never-newer", "read-long-ago"]
         )
+
+
+class SavedChatsTest(_Client):
+    def setUp(self):
+        super().setUp()
+        # Chat needs a key to be on; saved chats are read through its page.
+        self._client.__exit__(None, None, None)
+        self._client = self.client(
+            KB_WEB_ALLOW_UNAUTHENTICATED="true", ANTHROPIC_API_KEY="sk-test"
+        ).__enter__()
+
+    def chat_with(self, title="What is a semantic layer?", answer="It is [[rag]]."):
+        chat = self.chats.create(title)
+        self.chats.append(chat, "user", title)
+        self.chats.append(chat, "assistant", answer, source_ids=["rag"], cited=["rag"])
+        return chat
+
+    def test_the_sidebar_lists_chats_newest_first(self):
+        first = self.chat_with("Older question")
+        self.now += 60
+        second = self.chat_with("Newer question")
+
+        page = self.get("/chat")
+        self.assertIn("Older question", page)
+        self.assertIn("Newer question", page)
+        self.assertLess(page.index(f"/chat/{second}"), page.index(f"/chat/{first}"))
+
+    def test_reopening_a_chat_marks_it_and_serves_its_messages(self):
+        chat = self.chat_with()
+
+        page = self.get(f"/chat/{chat}")
+        self.assertIn(f'data-conversation="{chat}"', page)
+        self.assertIn('aria-current="page"', page)
+
+        saved = self._client.get(f"/api/chats/{chat}").json()
+        self.assertEqual(saved["title"], "What is a semantic layer?")
+        self.assertEqual([m["role"] for m in saved["messages"]], ["user", "assistant"])
+        answer = saved["messages"][1]
+        self.assertEqual(answer["cited"], ["rag"])
+        self.assertEqual(answer["notes"][0]["title"], "RAG evals")  # resolved through the library
+
+    def test_unknown_or_deleted_chats_are_404(self):
+        for path in ["/chat/nope", "/chat/" + "0" * 32, "/api/chats/" + "0" * 32]:
+            with self.subTest(path=path):
+                self.assertEqual(self._client.get(path).status_code, 404)
+
+    def test_notes_that_no_longer_exist_are_left_out(self):
+        chat = self.chats.create("t")
+        self.chats.append(self.chats.recent()[0].id, "assistant", "a", source_ids=["gone", "rag"])
+        saved = self._client.get(f"/api/chats/{chat}").json()
+        self.assertEqual([n["id"] for n in saved["messages"][0]["notes"]], ["rag"])
+
+    def test_rename(self):
+        chat = self.chat_with()
+        response = self.post(f"/chat/{chat}/rename", {"title": "  Semantic layers  "})
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], f"/chat/{chat}")
+        self.assertEqual(self.chats.get(chat).title, "Semantic layers")
+
+    def test_delete_returns_to_a_fresh_chat(self):
+        chat = self.chat_with()
+        response = self.post(f"/chat/{chat}/delete", {})
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/chat")
+        self.assertIsNone(self.chats.get(chat))
+        self.assertNotIn("What is a semantic layer?", self.get("/chat"))
+
+    def test_rename_and_delete_are_refused_from_other_sites(self):
+        chat = self.chat_with()
+        for path, data in [(f"/chat/{chat}/rename", {"title": "x"}), (f"/chat/{chat}/delete", {})]:
+            for headers in [{"Sec-Fetch-Site": "cross-site"}, {"Origin": "null"}, {}]:
+                with self.subTest(path=path, headers=headers):
+                    self.assertEqual(self.post(path, data, headers=headers).status_code, 403)
+        self.assertIsNotNone(self.chats.get(chat))
+
+    def test_an_unknown_chat_cannot_be_renamed_or_deleted(self):
+        for path in ["/chat/nope/rename", "/chat/" + "0" * 32 + "/delete"]:
+            with self.subTest(path=path):
+                self.assertEqual(self.post(path, {"title": "x"}).status_code, 404)
 
 
 class WebAuthTest(_Vault):

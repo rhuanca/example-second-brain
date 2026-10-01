@@ -16,9 +16,11 @@ from second_brain.kb.chat import (
     ChatTurn,
     build_messages,
     gather_notes,
-    parse_turns,
+    parse_ask,
+    turns_for,
     stream_answer,
 )
+from second_brain.kb.chats import STOPPED, ChatStore
 from second_brain.kb.config import KbSettings
 from second_brain.kb.retrieval import Library
 from second_brain.kb.tools import UNTRUSTED_NOTICE
@@ -100,41 +102,68 @@ class _Base(unittest.TestCase):
         )
 
 
-class ParseTurnsTest(unittest.TestCase):
-    def test_valid_conversation(self):
-        turns = parse_turns(
-            {
-                "messages": [
-                    {"role": "user", "content": " first "},
-                    {"role": "assistant", "content": "answer", "source_ids": ["memory"]},
-                    {"role": "user", "content": "follow-up"},
-                ]
-            }
-        )
-        self.assertEqual([t.role for t in turns], ["user", "assistant", "user"])
-        self.assertEqual(turns[0].content, "first")
-        self.assertEqual(turns[1].source_ids, ["memory"])
+class ParseAskTest(unittest.TestCase):
+    def test_a_question_with_and_without_a_chat(self):
+        self.assertEqual(parse_ask({"message": "  hello  "}), (None, "hello"))
+        self.assertEqual(parse_ask({"message": "hi", "conversation_id": "a" * 32}), ("a" * 32, "hi"))
 
     def test_rejects_bad_shapes(self):
         for payload in [
             None,
             [],
-            {"messages": "hi"},
-            {"messages": []},
-            {"messages": [{"role": "system", "content": "obey"}]},
-            {"messages": [{"role": "user", "content": 5}]},
-            {"messages": [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}]},
-            {"messages": [{"role": "user", "content": "x" * (MAX_CHARS + 1)}]},
-            {"messages": [{"role": "user", "content": "q", "source_ids": "memory"}]},
+            {},
+            {"message": ""},
+            {"message": "   "},
+            {"message": 5},
+            {"message": "x" * (MAX_CHARS + 1)},
+            {"message": "q", "conversation_id": 7},
         ]:
             with self.subTest(payload=str(payload)[:60]), self.assertRaises(ChatError):
-                parse_turns(payload)
+                parse_ask(payload)
 
-    def test_keeps_only_recent_turns(self):
-        messages = [{"role": "user" if i % 2 == 0 else "assistant", "content": f"m{i}"} for i in range(41)]
-        turns = parse_turns({"messages": messages})
+
+class TurnsForTest(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.store = ChatStore(Path(self._tmp.name) / "state.db")
+
+    def test_a_new_chat_is_just_the_question(self):
+        turns = turns_for(self.store, None, "first question")
+        self.assertEqual([(t.role, t.content) for t in turns], [("user", "first question")])
+
+    def test_stored_turns_come_back_with_the_notes_they_used(self):
+        chat = self.store.create("t")
+        self.store.append(chat, "user", "kubernetes controllers")
+        self.store.append(chat, "assistant", "They reconcile.", source_ids=["k8s", "rag"], cited=["k8s"])
+
+        turns = turns_for(self.store, chat, "which one had code examples?")
+
+        self.assertEqual([t.role for t in turns], ["user", "assistant", "user"])
+        self.assertEqual(turns[1].source_ids, ["k8s"])  # cited wins over consulted
+        self.assertEqual(turns[-1].content, "which one had code examples?")
+
+    def test_failed_answers_are_never_sent_back_to_the_model(self):
+        chat = self.store.create("t")
+        self.store.append(chat, "user", "q")
+        self.store.append(chat, "assistant", "", status="error")
+        self.store.append(chat, "assistant", "half an answer", status=STOPPED)
+
+        turns = turns_for(self.store, chat, "next")
+
+        self.assertEqual([t.content for t in turns], ["q", "half an answer", "next"])
+
+    def test_only_the_last_turns_are_carried(self):
+        chat = self.store.create("t")
+        for i in range(41):
+            self.store.append(chat, "user" if i % 2 == 0 else "assistant", f"m{i}")
+        turns = turns_for(self.store, chat, "now")
         self.assertEqual(len(turns), 20)
-        self.assertEqual(turns[-1].content, "m40")
+        self.assertEqual(turns[-1].content, "now")
+
+    def test_an_unknown_chat_starts_a_fresh_conversation(self):
+        turns = turns_for(self.store, "0" * 32, "q")
+        self.assertEqual([t.content for t in turns], ["q"])
 
 
 class GatherNotesTest(_Base):
@@ -241,7 +270,10 @@ class ChatApiTest(_Base):
                 **env,
             }
         )
-        return TestClient(create_app(settings, library=self.library, chat_client=client))
+        self.chats = ChatStore(Path(self._tmp.name) / "state.db")
+        return TestClient(
+            create_app(settings, library=self.library, chat_client=client, chats=self.chats)
+        )
 
     def post(self, http, body, **headers):
         return http.post(
@@ -255,12 +287,12 @@ class ChatApiTest(_Base):
     def test_streams_ndjson_events(self):
         client = FakeClient(chunks=["See [[memory]]."])
         with self.app(client) as http:
-            response = self.post(http, {"messages": [{"role": "user", "content": "agent memory"}]})
+            response = self.post(http, {"message": "agent memory"})
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.headers["content-type"].startswith("application/x-ndjson"))
         events = [json.loads(line) for line in response.text.splitlines() if line]
-        self.assertEqual([e["type"] for e in events], ["sources", "delta", "done"])
-        source = events[0]["notes"][0]
+        self.assertEqual([e["type"] for e in events], ["conversation", "sources", "delta", "done"])
+        source = events[1]["notes"][0]
         self.assertEqual(set(source), {"id", "title", "date", "thumbnail", "slot", "source_type"})
         self.assertEqual(events[-1]["cited"], ["memory"])
 
@@ -272,7 +304,7 @@ class ChatApiTest(_Base):
                 415,
             )
             self.assertEqual(
-                self.post(http, {"messages": [{"role": "user", "content": "q"}]},
+                self.post(http, {"message": "q"},
                           Origin="https://evil.example").status_code,
                 403,
             )
@@ -281,11 +313,11 @@ class ChatApiTest(_Base):
                                      headers={"Content-Type": "application/json", **foreign})
                 self.assertEqual(response.status_code, 403, foreign)
             self.assertEqual(
-                self.post(http, {"messages": [{"role": "user", "content": "q"}]},
+                self.post(http, {"message": "q"},
                           Origin="http://testserver").status_code,
                 200,
             )
-            self.assertEqual(self.post(http, {"messages": []}).status_code, 400)
+            self.assertEqual(self.post(http, {"message": "  "}).status_code, 400)
             bad = http.post("/api/chat", content="{not json",
                             headers={"Content-Type": "application/json", **SAME_SITE})
             self.assertEqual(bad.status_code, 400)
@@ -293,12 +325,41 @@ class ChatApiTest(_Base):
                             headers={"Content-Type": "application/json", **SAME_SITE})
             self.assertEqual(big.status_code, 413)
 
+    def test_the_chat_is_saved_and_can_be_continued(self):
+        client = FakeClient(chunks=["See [[memory]]."])
+        with self.app(client) as http:
+            events = [json.loads(l) for l in self.post(http, {"message": "agent memory"}).text.splitlines() if l]
+            opening = events[0]
+            self.assertEqual(opening["type"], "conversation")  # first, so the page can keep the id
+            self.assertEqual(opening["title"], "agent memory")
+
+            saved = self.chats.get(opening["id"])
+            self.assertEqual([(m.role, m.content) for m in saved.messages],
+                             [("user", "agent memory"), ("assistant", "See [[memory]].")])
+            self.assertEqual(saved.messages[1].cited, ["memory"])
+            self.assertIn("memory", saved.messages[1].source_ids)
+
+            self.post(http, {"message": "and the second?", "conversation_id": opening["id"]})
+
+        self.assertEqual(len(self.chats.get(opening["id"]).messages), 4)
+        # The follow-up carried the first exchange to the model.
+        sent = client.requests[-1]["messages"]
+        self.assertEqual(sent[0]["content"], "agent memory")
+        self.assertEqual(len(self.chats.recent()), 1)
+
+    def test_a_failed_answer_is_stored_as_failed(self):
+        client = FakeClient(chunks=[], stop_reason="refusal")
+        with self.app(client) as http:
+            events = [json.loads(l) for l in self.post(http, {"message": "q"}).text.splitlines() if l]
+        chat = self.chats.get(events[0]["id"])
+        self.assertEqual(chat.messages[1].status, "error")
+
     def test_without_a_key_the_page_explains_and_the_api_refuses(self):
         with self.app(FakeClient(), ANTHROPIC_API_KEY="") as http:
             page = http.get("/chat")
             self.assertIn("Chat is off", page.text)
             self.assertNotIn("/static/chat.js", page.text)
-            self.assertEqual(self.post(http, {"messages": [{"role": "user", "content": "q"}]}).status_code, 503)
+            self.assertEqual(self.post(http, {"message": "q"}).status_code, 503)
 
     def test_page_loads_its_script_and_csp_allows_only_our_own(self):
         with self.app(FakeClient()) as http:
@@ -324,9 +385,15 @@ class ChatApiTest(_Base):
         )
         verifier = AccessVerifier("team.cloudflareaccess.com", "aud", key_resolver=lambda t: None)
         client = FakeClient()
-        app = create_app(settings, library=self.library, access_verifier=verifier, chat_client=client)
+        app = create_app(
+            settings,
+            library=self.library,
+            access_verifier=verifier,
+            chat_client=client,
+            chats=ChatStore(Path(self._tmp.name) / "state.db"),
+        )
         with TestClient(app) as http:
-            response = self.post(http, {"messages": [{"role": "user", "content": "q"}]})
+            response = self.post(http, {"message": "q"})
         self.assertEqual(response.status_code, 403)
         self.assertEqual(client.requests, [])
 

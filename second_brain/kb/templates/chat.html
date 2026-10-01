@@ -1,8 +1,37 @@
 {% extends "base.html" %}
 {% block title %}Chat · Second Brain{% endblock %}
 {% block style %}
-  main { max-width: 860px; }
+  main { max-width: 1120px; }
   .chat-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+
+  /* Past chats: a disclosure on a phone, a column from tablet width up. */
+  .chat-cols { display: grid; gap: 18px; grid-template-columns: minmax(0, 1fr); align-items: start; }
+  .past summary { cursor: pointer; color: var(--ink-2); font-size: 0.9rem; padding: 6px 0; }
+  .past-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 4px;
+    max-height: 40vh; overflow-y: auto; }
+  .past-list li { display: flex; align-items: center; gap: 6px; }
+  .past-list a { flex: 1; min-width: 0; text-decoration: none; padding: 7px 10px; border-radius: 8px;
+    font-size: 0.88rem; line-height: 1.3; color: var(--ink-2); }
+  .past-list a:hover { background: var(--surface); color: var(--ink); }
+  .past-list a[aria-current="page"] { background: var(--surface); color: var(--ink); font-weight: 600;
+    box-shadow: inset 0 0 0 1px var(--ring); }
+  .past-list .t { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .past-list .when { color: var(--muted); font-size: 0.75rem; }
+  .past-list form { margin: 0; }
+  .past-list button { border: 0; background: none; color: var(--muted); cursor: pointer; font: inherit;
+    font-size: 0.95rem; line-height: 1; padding: 6px; border-radius: 6px; }
+  .past-list button:hover { color: var(--ink); background: var(--surface); }
+  .rename { display: flex; gap: 6px; margin: 10px 0 0; }
+  .rename input { flex: 1; min-width: 0; font: inherit; font-size: 0.88rem; padding: 5px 8px;
+    border-radius: 8px; border: 1px solid var(--grid); background: var(--raised); color: var(--ink); }
+  @media (min-width: 900px) {
+    .chat-cols { grid-template-columns: 240px minmax(0, 1fr); }
+    .past { position: sticky; top: 64px; }
+    .past-list { max-height: calc(100vh - 220px); }
+    .past summary { list-style: none; font-size: 0.78rem; letter-spacing: 0.07em; text-transform: uppercase;
+      color: var(--muted); font-weight: 600; pointer-events: none; }
+    .past summary::-webkit-details-marker { display: none; }
+  }
 
   .chat-log { display: flex; flex-direction: column; gap: 22px; margin: 18px 0 150px; }
   .msg-user { align-self: flex-end; max-width: 85%; background: var(--surface); box-shadow: 0 0 0 1px var(--ring);
@@ -54,11 +83,36 @@
     <h1>Chat with your notes</h1>
     <p class="lede" style="margin:0">Answers come from your saved notes and link the ones they use.</p>
   </div>
-  <button class="btn" type="button" id="new-chat" hidden>New chat</button>
+  <a class="btn" href="/chat">New chat</a>
 </div>
 
+<div class="chat-cols">
+<details class="past" open>
+  <summary>Past chats{% if saved %} · {{ saved | length }}{% endif %}</summary>
+  {% if saved %}
+  <ul class="past-list" id="past-list">
+    {% for chat in saved %}
+    <li>
+      <a href="/chat/{{ chat.id }}"{% if chat.active %} aria-current="page"{% endif %}><span class="t">{{ chat.title }}</span><span class="when">{{ chat.when }}</span></a>
+      <form method="post" action="/chat/{{ chat.id }}/delete">
+        <button type="submit" title="Delete this chat" aria-label="Delete {{ chat.title }}">×</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="count" style="margin:8px 0 0">Chats you start are kept here.</p>
+  {% endif %}
+  {% if conversation %}
+  <form class="rename" method="post" action="/chat/{{ conversation.id }}/rename">
+    <input type="text" name="title" value="{{ conversation.title }}" maxlength="60" aria-label="Rename this chat">
+    <button class="btn" type="submit">Rename</button>
+  </form>
+  {% endif %}
+</details>
+
 {% if enabled %}
-<div id="chat-root" data-max-chars="4000">
+<div id="chat-root" data-max-chars="4000"{% if conversation %} data-conversation="{{ conversation.id }}"{% endif %}>
   <div class="chat-log" id="chat-log" aria-live="polite">
     <div id="welcome" class="welcome">
       <p>Ask anything about what you've saved. Try one of these:</p>
@@ -74,10 +128,11 @@
       <button class="btn btn-primary" type="submit" id="send">Send</button>
     </form>
   </div>
-  <noscript><p class="empty">The chat needs JavaScript. Search works without it.</p></noscript>
+  <noscript><p class="empty">The chat needs JavaScript to ask a question. Your saved chats are listed above, and search works without it.</p></noscript>
 </div>
 {% else %}
 <p class="empty" style="margin-top:20px">Chat is off: it answers with Claude, so it needs <code>ANTHROPIC_API_KEY</code> set for the knowledge base (in <code>.env</code> or the environment), then a restart. Each answer sends the matching note summaries to the Anthropic API; search, the map and browsing stay on this machine.</p>
 {% endif %}
+</div>
 {% endblock %}
 {% block scripts %}{% if enabled %}<script src="/static/chat.js" defer></script>{% endif %}{% endblock %}
