@@ -196,7 +196,10 @@ uv run python -m second_brain.kb.main                 # http://127.0.0.1:8765
   together; pick a topic to highlight its notes. **Timeline** at `/timeline`: notes
   saved per month by topic or source, each bar linking to those notes.
 - **Chat** at `/chat`: a conversation with your notes. Answers stream in, cite the
-  notes they use as links, and follow-ups keep context. It needs
+  notes they use as links, and follow-ups keep context. **Chats are kept**: each
+  is titled by its first question, listed in a sidebar, and reopened at
+  `/chat/<id>` — rename or delete them there. An answer you stop mid-stream is
+  saved as far as it got. It needs
   `ANTHROPIC_API_KEY` and sends only the matching note *summaries* (never full
   archives) to the Anthropic API per question; model and effort are
   `KB_CHAT_MODEL` / `KB_CHAT_EFFORT`. Everything else stays on the machine.
@@ -371,7 +374,7 @@ flowchart LR
 | Obsidian vault | Source of truth. Flat `*.md` + `sources/*.source.md` archives. |
 | `second_brain/kb/topics.json` | The taxonomy, versioned in git so drift is visible. |
 | `KB_INDEX_DIR` | Embedding vectors + manifest + the downloaded model. Derived, rebuildable, outside the vault. |
-| `KB_STATE_DB` | SQLite: stars, archive flags, read counts. Your data, **not** rebuildable: back it up with the vault. |
+| `KB_STATE_DB` | SQLite: stars, archive flags, read counts, saved chats. Your data, **not** rebuildable: back it up with the vault. |
 | `scripts/*.py` | User-run maintenance (dedupe, flatten, discover topics, build index). Dry-run by default. |
 
 No database for the notes themselves (only the small state file above). At ~75 notes growing ~35/month, the corpus is ~26k words of notes
@@ -415,7 +418,7 @@ matrix for 1,300 notes would be ~2 MB.
   - `config.py` — its own narrow settings (no Telegram credentials)
   - `notes.py` — notes → cards; `topics.py` — topic discovery
   - `embeddings.py` — local embedding index; `retrieval.py` — `Library`: search + safe id lookups
-  - `state.py` — stars, archive flags and reads (SQLite, `KB_STATE_DB`)
+  - `state.py` — stars, archive flags and reads; `chats.py` — saved conversations (both SQLite, `KB_STATE_DB`)
   - `tools.py` — the five tools; `mcp_server.py` — MCP over streamable HTTP
   - `web.py` + `templates/` — browse UI, map, timeline; `visuals.py` — chart geometry and topic colours
   - `chat.py` + `static/chat.js` — chat with your notes; `auth.py` — bearer token / Access JWT
