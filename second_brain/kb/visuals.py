@@ -30,6 +30,14 @@ from second_brain.youtube import video_id
 
 SLOTS = 8
 OTHER = 0  # the neutral slot
+
+# Map labels: 13px semibold, so ~7.2px a character; a line is ~16px tall. Past a
+# handful of labels the map reads as a word cloud, so only the biggest get one.
+LABEL_CHAR_W = 7.2
+LABEL_LINE_H = 18.0
+MAX_LABELS = 7
+# Percentile the map scales to, instead of the outermost note.
+OUTLIER_PCT = 2.0
 SOURCE_ORDER = ("youtube", "article", "medium", "pdf")
 _MONTH = re.compile(r"^(\d{4})-(\d{2})")
 
@@ -346,16 +354,25 @@ def map_layout(
     *,
     pad: float = 24.0,
 ) -> list[Point]:
-    """Place notes in a width×height box, one uniform scale so distances stay honest."""
+    """Place notes in a width×height box, one uniform scale so distances stay honest.
+
+    Scaled to the middle `OUTLIER_PCT`..100-`OUTLIER_PCT` of the cloud rather than
+    its extremes: a couple of far-out notes would otherwise squeeze everything else
+    into an unreadable knot in the middle. Those few land on the edge instead, which
+    is also where they belong.
+    """
     coords = project_2d(vectors)
     if len(coords) == 0:
         return []
-    lo, hi = coords.min(axis=0), coords.max(axis=0)
+    lo = np.percentile(coords, OUTLIER_PCT, axis=0)
+    hi = np.percentile(coords, 100 - OUTLIER_PCT, axis=0)
     span = np.where(hi - lo > 1e-9, hi - lo, 1.0)
     scale = min((width - 2 * pad) / span[0], (height - 2 * pad) / span[1])
     used = (hi - lo) * scale
     offset = np.array([(width - used[0]) / 2, (height - used[1]) / 2])
     placed = (coords - lo) * scale + offset
+    placed[:, 0] = np.clip(placed[:, 0], pad, width - pad)
+    placed[:, 1] = np.clip(placed[:, 1], pad, height - pad)
     points = [
         Point(note_id, float(x), float(height - y))  # SVG y grows downward
         for note_id, (x, y) in zip(note_ids, placed)
@@ -382,23 +399,45 @@ def _spread_overlaps(points: list[Point], width: float, height: float, *, gap: f
     return taken
 
 
+def label_width(text: str) -> float:
+    """Roughly how wide a map label renders (13px, semibold, centred)."""
+    return max(len(text), 1) * LABEL_CHAR_W
+
+
 def label_positions(
-    groups: dict[str, list[Point]], *, min_dx: float = 70.0, min_dy: float = 16.0
+    groups: dict[str, list[Point]],
+    names: dict[str, str] | None = None,
+    *,
+    min_dy: float = LABEL_LINE_H,
+    limit: int = MAX_LABELS,
 ) -> dict[str, tuple[float, float]]:
     """A label for each group, biggest groups first, skipping ones that would collide.
 
     Anchored on the group's medoid -- its most central actual note -- rather than
     the centroid, which for a spread-out topic can fall in empty space and point
     at dots that belong to something else.
+
+    Two labels clear each other only when their *drawn boxes* do. A fixed
+    horizontal gap is not enough: topic names here run to forty characters, so
+    "Ontology, Knowledge Graphs & Semantic Layers" overlaps its neighbour long
+    before their anchors are far apart. At most `limit` are placed -- past that the
+    map is text, not a map.
     """
+    names = names or {}
     placed: dict[str, tuple[float, float]] = {}
+    boxes: list[tuple[float, float, float]] = []  # (x, y, half-width)
     for key, points in sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0])):
-        if not points:
+        if not points or len(placed) >= limit:
             continue
         cx = sum(p.x for p in points) / len(points)
         cy = sum(p.y for p in points) / len(points)
         medoid = min(points, key=lambda p: (p.x - cx) ** 2 + (p.y - cy) ** 2)
         mx, my = medoid.x, medoid.y
-        if all(abs(mx - x) > min_dx or abs(my - y) > min_dy for x, y in placed.values()):
+        half = label_width(names.get(key, key)) / 2
+        if all(
+            abs(mx - x) > half + other_half or abs(my - y) > min_dy
+            for x, y, other_half in boxes
+        ):
             placed[key] = (mx, my)
+            boxes.append((mx, my, half))
     return placed

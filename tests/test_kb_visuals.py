@@ -8,6 +8,7 @@ from second_brain.kb.visuals import (
     OTHER,
     Series,
     label_positions,
+    label_width,
     map_layout,
     month_span,
     project_2d,
@@ -155,6 +156,23 @@ class MapTest(unittest.TestCase):
         vectors = np.random.default_rng(1).normal(size=(20, 8))
         np.testing.assert_allclose(project_2d(vectors), project_2d(vectors.copy()))
 
+    def test_a_few_outliers_do_not_squash_everyone_else(self):
+        """Scaling to the extremes put the whole cloud in a knot in the middle."""
+        rng = np.random.default_rng(3)
+        core = rng.normal(0, 0.02, (60, 8))
+        strays = np.array([[9.0] + [0.0] * 7, [-9.0] + [0.0] * 7])
+        ids = [f"n{i}" for i in range(62)]
+
+        points = map_layout(ids, np.vstack([core, strays]), 800, 500)
+
+        inner = [p for p in points if p.note_id not in ("n60", "n61")]
+        spread = max(p.x for p in inner) - min(p.x for p in inner)
+        # Scaled to the extremes these 60 notes shared about 3px; now they use
+        # most of the canvas (the uniform x/y scale caps it below the full width).
+        self.assertGreater(spread, 250)
+        for p in points:
+            self.assertTrue(0 <= p.x <= 800 and 0 <= p.y <= 500)  # strays stay inside
+
     def test_tiny_inputs(self):
         self.assertEqual(map_layout([], np.zeros((0, 4)), 100, 100), [])
         (only,) = map_layout(["x"], np.ones((1, 4)), 100, 100)
@@ -186,6 +204,43 @@ class MapTest(unittest.TestCase):
         }
         labels = label_positions(groups)
         self.assertEqual(set(labels), {"big", "far"})
+
+    def test_a_long_name_claims_the_room_it_actually_draws_in(self):
+        """Two anchors 200px apart are fine for short names and not for long ones:
+        the real topic names run to forty characters."""
+        from second_brain.kb.visuals import Point
+
+        groups = {"a": [Point("1", 300, 100)], "b": [Point("2", 500, 100)]}
+        short = {"a": "RAG", "b": "Evals"}
+        long = {
+            "a": "Ontology, Knowledge Graphs & Semantic Layers",
+            "b": "Agent Memory & Context Engineering",
+        }
+
+        self.assertEqual(set(label_positions(groups, short)), {"a", "b"})
+        self.assertEqual(set(label_positions(groups, long)), {"a"})
+
+    def test_a_label_above_another_is_allowed(self):
+        from second_brain.kb.visuals import Point
+
+        groups = {"a": [Point("1", 300, 100)], "b": [Point("2", 300, 160)]}
+        names = {"a": "Agent Memory & Context Engineering", "b": "RAG & Retrieval Systems"}
+        self.assertEqual(set(label_positions(groups, names)), {"a", "b"})
+
+    def test_only_the_biggest_topics_get_a_label(self):
+        from second_brain.kb.visuals import MAX_LABELS, Point
+
+        groups = {
+            f"t{i}": [Point(f"{i}.{j}", 60 * i, 40 * i) for j in range(i + 1)]
+            for i in range(12)
+        }
+        labels = label_positions(groups, {k: "T" for k in groups})
+        self.assertEqual(len(labels), MAX_LABELS)
+        self.assertIn("t11", labels)  # the largest group
+        self.assertNotIn("t0", labels)  # the smallest
+
+    def test_label_width_grows_with_the_name(self):
+        self.assertLess(label_width("RAG"), label_width("RAG & Retrieval Systems"))
 
 
 if __name__ == "__main__":

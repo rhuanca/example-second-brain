@@ -67,10 +67,6 @@ TREEMAP_W, TREEMAP_H = 1050, 300
 MAP_W, MAP_H = 1050, 620
 TIMELINE_W, TIMELINE_H = 1050, 320
 OTHER_KEY = "__other"
-# A scatter only keeps colours distinguishable for a few series at once, so the
-# map colours every topic only when there are this many or fewer; otherwise it
-# highlights one topic at a time.
-MAP_COLOUR_ALL_MAX = 3
 # Rough width of a 13px label character, to decide whether a name fits its tile.
 _CHAR_W = 7.2
 
@@ -219,7 +215,10 @@ def build_router(
         known = {t.id for t in topics}
         if topic and topic not in known:
             return not_found(request)
-        colour_all = not topic and 2 <= len(topics) <= MAP_COLOUR_ALL_MAX
+        # Colour whenever there is a taxonomy: the palette carries eight topics and
+        # folds the rest into the neutral slot, so more topics cost legibility only
+        # for the smaller ones -- far less than a uniformly grey cloud does.
+        colour_all = not topic and len(topics) >= 2
 
         dots, groups = [], {t.id: [] for t in topics}
         for point in library.map_points(MAP_W, MAP_H):
@@ -250,10 +249,11 @@ def build_router(
         # Highlighted dots are drawn last so they sit on top.
         dots.sort(key=lambda d: (d["slot"] is not None, not d["dim"]))
 
+        names = {t.id: t.name for t in topics}
         wanted = {topic: groups[topic]} if topic else groups
         labels = [
-            {"name": next(t.name for t in topics if t.id == tid), "x": x, "y": y}
-            for tid, (x, y) in label_positions(wanted).items()
+            {"name": names[tid], "x": x, "y": y}
+            for tid, (x, y) in label_positions(wanted, names).items()
         ]
         return render(
             request,
@@ -266,7 +266,14 @@ def build_router(
             note_count=len(cards),
             topic=next((_topic_view(t.id, library, slots) | {"count": len(groups[t.id])}
                         for t in topics if t.id == topic), None),
-            legend=[_topic_view(t.id, library, slots) for t in topics] if colour_all else [],
+            legend=(
+                [_topic_view(t.id, library, slots) for t in topics if slots[t.id] != OTHER]
+                if colour_all
+                else []
+            ),
+            other_topics=(
+                sum(1 for t in topics if slots[t.id] == OTHER) if colour_all else 0
+            ),
             pickers=[
                 {**_topic_view(t.id, library, slots), "active": t.id == topic,
                  "url": f"/map?{urlencode({'topic': t.id})}"}

@@ -157,6 +157,22 @@ class PagesTest(_Client):
         self.assertIn("1 of 3 notes", html)
         self.get("/map?topic=nope", status=404)
 
+    def test_map_stays_coloured_past_the_palette(self):
+        """A real taxonomy runs to a dozen-plus topics. The map used to give up and
+        draw every dot grey; now the palette's eight are coloured and the rest
+        share the neutral slot, named as such in the legend."""
+        self.taxonomy = Taxonomy(
+            topics=[Topic(f"t{i}", f"Topic {i}", "", ["memory" if i == 0 else "rag"])
+                    for i in range(12)]
+        )
+        self._client.app.state.library.refresh_if_stale(force=True)
+        html = self.get("/map")
+
+        self.assertIn("map-dot fill-s1", html)  # coloured, not neutral
+        self.assertIn('<ul class="legend">', html)
+        self.assertIn("smaller topics, or none", html)
+        self.assertNotIn("Topic 11", html.split('<ul class="legend">')[1].split("</ul>")[0])
+
     def test_map_colours_every_topic_when_there_are_few(self):
         self.taxonomy = Taxonomy(
             topics=[

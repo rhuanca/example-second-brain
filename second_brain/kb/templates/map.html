@@ -29,7 +29,7 @@
   {% if topic %}
   <p class="count" style="margin:0 0 10px"><span class="swatch bg-s{{ topic.slot }}" style="display:inline-block;vertical-align:0"></span> {{ topic.name }}: {{ topic.count }} of {{ note_count }} notes · <a href="/notes?topic={{ topic.id | urlencode }}">list them</a></p>
   {% elif legend %}
-  <ul class="legend">{% for t in legend %}<li><span class="swatch bg-s{{ t.slot }}"></span>{{ t.name }}</li>{% endfor %}<li><span class="swatch bg-s0"></span>Not in a topic</li></ul>
+  <ul class="legend">{% for t in legend %}<li><span class="swatch bg-s{{ t.slot }}"></span>{{ t.name }}</li>{% endfor %}<li><span class="swatch bg-s0"></span>{% if other_topics %}{{ other_topics }} smaller topic{{ "" if other_topics == 1 else "s" }}, or none{% else %}Not in a topic{% endif %}</li></ul>
   {% endif %}
   <div class="chart-scroll">
     <svg class="chart-min map-canvas" viewBox="0 0 {{ width }} {{ height }}" role="img" aria-label="Map of {{ note_count }} notes placed by similarity">
