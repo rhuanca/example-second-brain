@@ -18,7 +18,7 @@ import calendar
 import math
 import re
 from collections import Counter
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from urllib.parse import urlencode
 
@@ -38,6 +38,16 @@ LABEL_LINE_H = 18.0
 MAX_LABELS = 7
 # Percentile the map scales to, instead of the outermost note.
 OUTLIER_PCT = 2.0
+
+# Cluster refinement: how hard a note is drawn toward its topic's centre, how
+# close two notes may sit before they push apart, and for how many passes. Both
+# forces cool linearly, so the layout settles instead of oscillating.
+REFINE_PASSES = 80
+ATTRACTION = 0.06
+REPULSION = 20.0
+# Refinement compares every pair, so it is quadratic. Past this many notes the
+# map is a smear anyway and the time is better not spent.
+MAX_REFINE = 900
 SOURCE_ORDER = ("youtube", "article", "medium", "pdf")
 _MONTH = re.compile(r"^(\d{4})-(\d{2})")
 
@@ -353,6 +363,7 @@ def map_layout(
     height: float,
     *,
     pad: float = 24.0,
+    topics: Mapping[str, str] | None = None,
 ) -> list[Point]:
     """Place notes in a width×height box, one uniform scale so distances stay honest.
 
@@ -373,11 +384,77 @@ def map_layout(
     placed = (coords - lo) * scale + offset
     placed[:, 0] = np.clip(placed[:, 0], pad, width - pad)
     placed[:, 1] = np.clip(placed[:, 1], pad, height - pad)
+    if topics:
+        placed = _refine_clusters(placed, [topics.get(n) for n in note_ids], width, height, pad)
     points = [
         Point(note_id, float(x), float(height - y))  # SVG y grows downward
         for note_id, (x, y) in zip(note_ids, placed)
     ]
     return _spread_overlaps(points, width, height)
+
+
+def _refine_clusters(
+    placed: np.ndarray,
+    topic_of: Sequence[str | None],
+    width: float,
+    height: float,
+    pad: float,
+) -> np.ndarray:
+    """Pull notes toward their topic's centre while pushing neighbours apart.
+
+    Two linear components cannot separate a dozen topics, so the projection alone
+    scatters one topic across the canvas. This keeps those positions as the
+    starting point -- near stays near -- and lets each note drift toward the rest
+    of its topic, so a colour reads as one place rather than confetti.
+
+    A note in no topic is only pushed, never pulled: inventing a "no topic" centre
+    would gather unrelated notes into a cluster that means nothing. Deterministic:
+    no randomness, fixed schedule.
+    """
+    n = len(placed)
+    if n < 2 or n > MAX_REFINE:
+        return placed
+
+    known = sorted({t for t in topic_of if t})
+    if not known:
+        return placed
+    index = {topic: i for i, topic in enumerate(known)}
+    # -1 marks "no topic": pushed by its neighbours, pulled by nobody.
+    group = np.array([index.get(t, -1) if t else -1 for t in topic_of])
+    pulled = group >= 0
+    counts = np.bincount(group[pulled], minlength=len(known)).astype(float)
+
+    xy = placed.astype(np.float64).copy()
+    for step in range(REFINE_PASSES):
+        cooling = 1.0 - step / REFINE_PASSES
+
+        centres = np.zeros((len(known), 2))
+        np.add.at(centres, group[pulled], xy[pulled])
+        centres /= counts[:, None]
+        xy[pulled] += ATTRACTION * cooling * (centres[group[pulled]] - xy[pulled])
+
+        delta = xy[:, None, :] - xy[None, :, :]
+        distance = np.sqrt((delta**2).sum(axis=-1))
+        # Finite, not inf: np.where evaluates both branches, and inf/inf is a nan.
+        np.fill_diagonal(distance, REPULSION * 1e6)
+        crowded = distance < REPULSION
+        if crowded.any():
+            push = np.where(crowded, (REPULSION - distance) / np.maximum(distance, 1e-6), 0.0)
+            xy += 0.5 * cooling * (delta * push[:, :, None]).sum(axis=1)
+
+        xy[:, 0] = np.clip(xy[:, 0], pad, width - pad)
+        xy[:, 1] = np.clip(xy[:, 1], pad, height - pad)
+
+    return _fill_box(xy, width, height, pad)
+
+
+def _fill_box(xy: np.ndarray, width: float, height: float, pad: float) -> np.ndarray:
+    """Re-centre and rescale to the box; clustering tends to shrink the cloud."""
+    lo, hi = xy.min(axis=0), xy.max(axis=0)
+    span = np.where(hi - lo > 1e-9, hi - lo, 1.0)
+    scale = min((width - 2 * pad) / span[0], (height - 2 * pad) / span[1])
+    used = (hi - lo) * scale
+    return (xy - lo) * scale + np.array([(width - used[0]) / 2, (height - used[1]) / 2])
 
 
 def _spread_overlaps(points: list[Point], width: float, height: float, *, gap: float = 9.0) -> list[Point]:

@@ -226,20 +226,39 @@ class Library:
     # --- the map ---------------------------------------------------------------
 
     def map_points(self, width: float, height: float) -> list[Point]:
-        """Every note placed on a 2D map by similarity. Recomputed only when the
-        index changes, not per request."""
+        """Every note placed on a 2D map by similarity, then drawn toward the rest
+        of its topic so a topic reads as one place. Recomputed only when the index,
+        the topics or the archive change -- not per request."""
         with self._lock:
-            key = (self._version, frozenset(self._archived), width, height)
+            topic_of = {
+                card.note_id: ids[0]
+                for card in self._cards.values()
+                if card.note_id not in self._archived and (ids := self.topics_for(card))
+            }
+            key = (
+                self._version,
+                frozenset(self._archived),
+                tuple(sorted(topic_of.items())),
+                width,
+                height,
+            )
             if self._map_cache is None or self._map_cache[0] != key:
                 index = self._index
-                if index is None or not index.note_ids:
+                shown = [
+                    i
+                    for i, note_id in enumerate(index.note_ids if index else [])
+                    if note_id in self._cards and note_id not in self._archived
+                ]
+                if not shown:
                     points = []
                 else:
-                    points = map_layout(index.note_ids, index.vectors, width, height)
-                points = [
-                    p for p in points
-                    if p.note_id in self._cards and p.note_id not in self._archived
-                ]
+                    points = map_layout(
+                        [index.note_ids[i] for i in shown],
+                        index.vectors[shown],
+                        width,
+                        height,
+                        topics=topic_of,
+                    )
                 self._map_cache = (key, points)
             return list(self._map_cache[1])
 

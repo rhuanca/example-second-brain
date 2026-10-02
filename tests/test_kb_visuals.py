@@ -173,6 +173,74 @@ class MapTest(unittest.TestCase):
         for p in points:
             self.assertTrue(0 <= p.x <= 800 and 0 <= p.y <= 500)  # strays stay inside
 
+    def test_a_topic_ends_up_in_one_place(self):
+        """What the refinement is for: two linear components scatter a dozen
+        topics, so the same colour appeared all over the canvas."""
+        rng = np.random.default_rng(5)
+        ids, vectors, topics = [], [], {}
+        for t in range(6):
+            centre = rng.normal(size=32)
+            for i in range(12):
+                note_id = f"t{t}-{i}"
+                ids.append(note_id)
+                vectors.append(centre + rng.normal(0, 1.4, 32))
+                topics[note_id] = f"topic{t}"
+        vectors = np.array(vectors)
+
+        loose = {p.note_id: p for p in map_layout(ids, vectors, 1050, 620)}
+        tight = {p.note_id: p for p in map_layout(ids, vectors, 1050, 620, topics=topics)}
+
+        def spread(points):
+            per_topic = []
+            for t in range(6):
+                group = [points[f"t{t}-{i}"] for i in range(12)]
+                cx = sum(p.x for p in group) / len(group)
+                cy = sum(p.y for p in group) / len(group)
+                per_topic.append(
+                    sum(((p.x - cx) ** 2 + (p.y - cy) ** 2) ** 0.5 for p in group) / len(group)
+                )
+            return sum(per_topic) / len(per_topic)
+
+        self.assertLess(spread(tight), spread(loose) * 0.75)
+
+    def test_notes_without_a_topic_are_not_herded_together(self):
+        """A "no topic" centre would gather unrelated notes into a fake cluster."""
+        rng = np.random.default_rng(6)
+        ids = [f"n{i}" for i in range(40)]
+        vectors = rng.normal(size=(40, 16))
+        topics = {"n0": "a", "n1": "a", "n2": "a"}  # the other 37 have none
+
+        points = {p.note_id: p for p in map_layout(ids, vectors, 800, 500, topics=topics)}
+        free = [points[f"n{i}"] for i in range(3, 40)]
+        cx = sum(p.x for p in free) / len(free)
+        cy = sum(p.y for p in free) / len(free)
+        spread = sum(((p.x - cx) ** 2 + (p.y - cy) ** 2) ** 0.5 for p in free) / len(free)
+        self.assertGreater(spread, 100)
+
+    def test_refinement_is_deterministic_and_stays_in_the_box(self):
+        rng = np.random.default_rng(7)
+        ids = [f"n{i}" for i in range(50)]
+        vectors = rng.normal(size=(50, 16))
+        topics = {note_id: f"t{i % 4}" for i, note_id in enumerate(ids)}
+
+        first = map_layout(ids, vectors, 800, 500, topics=topics)
+        again = map_layout(ids, vectors.copy(), 800, 500, topics=topics)
+
+        self.assertEqual([(p.note_id, round(p.x, 6), round(p.y, 6)) for p in first],
+                         [(p.note_id, round(p.x, 6), round(p.y, 6)) for p in again])
+        for p in first:
+            self.assertTrue(0 <= p.x <= 800 and 0 <= p.y <= 500)
+
+    def test_a_vault_too_big_to_refine_still_renders(self):
+        from second_brain.kb.visuals import MAX_REFINE
+
+        count = MAX_REFINE + 10
+        rng = np.random.default_rng(8)
+        ids = [f"n{i}" for i in range(count)]
+        points = map_layout(ids, rng.normal(size=(count, 8)), 800, 500,
+                            topics={i: "t" for i in ids})
+        self.assertEqual(len(points), count)
+
     def test_tiny_inputs(self):
         self.assertEqual(map_layout([], np.zeros((0, 4)), 100, 100), [])
         (only,) = map_layout(["x"], np.ones((1, 4)), 100, 100)
