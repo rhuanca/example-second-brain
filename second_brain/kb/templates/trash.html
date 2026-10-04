@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Trash · Second Brain{% endblock %}
+{% block style %}
+  .rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+  .rows li { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; justify-content: space-between;
+    padding: 10px 14px; background: var(--surface); border-radius: 10px; box-shadow: 0 0 0 1px var(--ring); }
+  .rows .what { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 260px; }
+  .rows .what b { font-weight: 600; overflow-wrap: anywhere; }
+  .rows form { margin: 0; }
+{% endblock %}
+{% block content %}
+<h1>Trash</h1>
+<p class="lede">Deleted notes live in the vault's <code>.trash</code> folder until you empty it. Nothing is removed on a schedule.</p>
+
+{% if notes %}
+<ul class="rows">
+  {% for note in notes %}
+  <li>
+    <div class="what">
+      <b>{{ note.title }}</b>
+      <span class="reads">{% if note.date %}Saved {{ note.date }}{% else %}Undated{% endif %}{% if note.has_archive %} · with its captured text{% endif %}</span>
+    </div>
+    <form method="post" action="/trash/restore">
+      <input type="hidden" name="name" value="{{ note.name }}">
+      <button class="btn" type="submit">Restore</button>
+    </form>
+  </li>
+  {% endfor %}
+</ul>
+
+<div class="toolbar" style="margin-top:18px">
+  {% if confirm %}
+  <form method="post" action="/trash/empty">
+    <button class="btn btn-primary" type="submit">Delete {{ notes | length }} note{{ "" if notes | length == 1 else "s" }} for good</button>
+  </form>
+  <a class="btn" href="/trash">Cancel</a>
+  {% else %}
+  <a class="btn" href="/trash?confirm=empty">Empty trash…</a>
+  {% endif %}
+</div>
+{% else %}
+<p class="empty">The trash is empty. <a href="/archive">Archived notes</a> are kept in the library — deleting a note is what puts it here.</p>
+{% endif %}
+{% endblock %}

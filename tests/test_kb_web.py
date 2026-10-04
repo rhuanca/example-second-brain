@@ -480,6 +480,69 @@ class SavedChatsTest(_Client):
                 self.assertEqual(self.post(path, {"title": "x"}).status_code, 404)
 
 
+class DeleteTest(_Client):
+    def test_a_get_never_deletes_it_only_asks(self):
+        page = self.get("/notes/memory/delete")
+        self.assertIn("Delete this note?", page)
+        self.assertIn("Agent memory", page)
+        self.assertIn('action="/notes/memory/delete"', page)
+        self.assertIn('href="/notes/memory"', page)  # cancel
+        self.assertIn("/notes/memory", self.get("/notes"))  # still there
+
+    def test_deleting_moves_it_to_the_trash_and_out_of_the_library(self):
+        response = self.post("/notes/memory/delete", {})
+
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/trash")
+        for path in ["/", "/notes", "/map", "/search?q=vector+memory"]:
+            with self.subTest(path=path):
+                self.assertNotIn("/notes/memory", self.get(path))
+        self.assertEqual(self._client.get("/notes/memory").status_code, 404)
+        self.assertIn("Agent memory", self.get("/trash"))
+
+    def test_restoring_puts_it_back(self):
+        self.post("/notes/memory/delete", {})
+        response = self.post("/trash/restore", {"name": "memory.md"})
+
+        self.assertEqual(response.status_code, 303)
+        self.assertIn("/notes/memory", self.get("/notes"))
+        self.assertIn("The trash is empty", self.get("/trash"))
+
+    def test_emptying_asks_first(self):
+        self.post("/notes/memory/delete", {})
+
+        self.assertIn("Empty trash…", self.get("/trash"))
+        self.assertIn("Delete 1 note for good", self.get("/trash?confirm=empty"))
+
+        self.assertEqual(self.post("/trash/empty", {}).status_code, 303)
+        self.assertIn("The trash is empty", self.get("/trash"))
+        self.assertEqual(self.post("/trash/restore", {"name": "memory.md"}).status_code, 404)
+
+    def test_every_write_is_refused_from_another_site(self):
+        for path, data in [
+            ("/notes/memory/delete", {}),
+            ("/trash/restore", {"name": "memory.md"}),
+            ("/trash/empty", {}),
+        ]:
+            for headers in [{"Sec-Fetch-Site": "cross-site"}, {"Origin": "null"}, {}]:
+                with self.subTest(path=path, headers=headers):
+                    self.assertEqual(self.post(path, data, headers=headers).status_code, 403)
+        self.assertIn("/notes/memory", self.get("/notes"))
+
+    def test_unknown_and_crafted_ids_are_404(self):
+        for note_id in ["nope", "..%2Fsecret"]:
+            with self.subTest(note_id=note_id):
+                self.assertEqual(self._client.get(f"/notes/{note_id}/delete").status_code, 404)
+                self.assertEqual(self.post(f"/notes/{note_id}/delete", {}).status_code, 404)
+        self.assertEqual(self.post("/trash/restore", {"name": "../secret.md"}).status_code, 404)
+        self.assertTrue((self.root.parent / "secret.md").is_file())  # never touched
+
+    def test_an_archived_note_can_still_be_deleted(self):
+        self.post("/notes/memory/archive", {"on": "1"})
+        self.assertEqual(self.post("/notes/memory/delete", {}).status_code, 303)
+        self.assertIn("Agent memory", self.get("/trash"))
+
+
 class WebAuthTest(_Vault):
     def setUp(self):
         super().setUp()

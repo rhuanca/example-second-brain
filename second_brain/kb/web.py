@@ -469,6 +469,56 @@ def build_router(
             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
         )
 
+    @router.get("/notes/{note_id}/delete", response_class=HTMLResponse)
+    def confirm_delete(request: Request, note_id: str):
+        """A confirmation step, because a GET must never delete and this is the
+        one action in the UI that takes a note out of the library."""
+        library.refresh_if_stale()
+        card = library.card(note_id)
+        if card is None:
+            return not_found(request)
+        return render(
+            request,
+            "confirm_delete.html",
+            note=_view(card, library, topic_slots(library.topics())),
+        )
+
+    @router.post("/notes/{note_id}/delete")
+    async def delete_note(request: Request, note_id: str):
+        form = await _form(request)
+        if isinstance(form, HTMLResponse):
+            return form
+        if not library.delete(note_id):
+            return not_found(request)
+        return RedirectResponse("/trash", status_code=303)
+
+    @router.get("/trash", response_class=HTMLResponse)
+    def trash_page(request: Request):
+        return render(
+            request,
+            "trash.html",
+            active="/archive",
+            notes=library.trashed(),
+            confirm=request.query_params.get("confirm") == "empty",
+        )
+
+    @router.post("/trash/restore")
+    async def restore_note(request: Request):
+        form = await _form(request)
+        if isinstance(form, HTMLResponse):
+            return form
+        if not library.restore((form.get("name") or [None])[0]):
+            return not_found(request)
+        return RedirectResponse("/trash", status_code=303)
+
+    @router.post("/trash/empty")
+    async def empty_trash(request: Request):
+        form = await _form(request)
+        if isinstance(form, HTMLResponse):
+            return form
+        library.empty_trash()
+        return RedirectResponse("/trash", status_code=303)
+
     @router.get("/archive", response_class=HTMLResponse)
     def archive_page(request: Request):
         library.refresh_if_stale()

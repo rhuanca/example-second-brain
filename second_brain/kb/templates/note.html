@@ -20,6 +20,7 @@
         <input type="hidden" name="on" value="{{ 0 if archived else 1 }}">
         <button class="btn" type="submit">{{ "Unarchive" if archived else "Archive" }}</button>
       </form>
+      <a class="btn" href="/notes/{{ note.id | urlencode }}/delete">Delete…</a>
       <span class="reads">{{ reads }}</span>
     </div>
   </div>

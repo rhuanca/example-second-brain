@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Delete {{ note.title }}? · Second Brain{% endblock %}
+{% block content %}
+<h1>Delete this note?</h1>
+<p class="lede">It moves to the vault's trash, where you can put it back.</p>
+
+<div class="panel" style="max-width:640px">
+  <p style="margin:0 0 6px;font-weight:600">{% if note.starred %}<span class="star">★</span>{% endif %}{{ note.title }}</p>
+  <p class="count" style="margin:0 0 14px">
+    {% if note.date %}{{ note.date }} · {% endif %}{{ note.source_type }}{% if note.source_label %} · {{ note.source_label }}{% endif %}
+  </p>
+  <div class="toolbar">
+    <form method="post" action="/notes/{{ note.id | urlencode }}/delete">
+      <button class="btn btn-primary" type="submit">Delete</button>
+    </form>
+    <a class="btn" href="/notes/{{ note.id | urlencode }}">Cancel</a>
+  </div>
+</div>
+{% endblock %}
