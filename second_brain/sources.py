@@ -16,11 +16,17 @@ Falling through matters: Medium began serving a Cloudflare challenge to plain
 HTTP clients, and when the cookie path raised straight to the caller a set
 `MEDIUM_COOKIE` turned every Medium link into "could not download" -- the one
 route that still worked was never tried.
+
+A route that answers with almost no text has not succeeded either -- a consent
+wall, a redirect stub, or (once) a cached ad pixel standing in for a Databricks
+post, which was then summarised and filed as a note. Too little text demotes a
+route to the next one; it never ends the capture, and whatever the last route
+returns is accepted, so a genuinely short post still gets through.
 """
 
 from __future__ import annotations
 
-from second_brain.fetcher import Article, FetchError
+from second_brain.fetcher import Article, FetchError, is_thin
 from second_brain.fetcher import fetch as _article_fetch
 from second_brain.jina import fetch_jina as _jina_fetch
 from second_brain.medium import fetch_medium as _medium_fetch
@@ -58,7 +64,9 @@ def fetch(
 
     for route in routes[:-1]:
         try:
-            return route()
+            article = route()
         except FetchError:
             continue  # the next route may still reach it
+        if not is_thin(article.text):
+            return article
     return routes[-1]()

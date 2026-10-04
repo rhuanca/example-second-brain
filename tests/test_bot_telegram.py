@@ -4,6 +4,8 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+FILLER = " " + "enough words here to count as an article. " * 12
+
 from second_brain.bot import (
     ASK_USAGE,
     NO_URL_MESSAGE,
@@ -114,7 +116,7 @@ class AllowListTest(unittest.TestCase):
         handler = make_handler(
             self.settings,
             self.vault,
-            fetch=lambda url: Article("Agentic Patterns", "body"),
+            fetch=lambda url: Article("Agentic Patterns", "body" + FILLER),
             summarize=lambda *a, **k: summary,
             today=lambda: __import__("datetime").date(2026, 6, 30),
         )

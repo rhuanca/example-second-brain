@@ -5,8 +5,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
+# Below this many characters the "article" is not one: a consent wall, a
+# redirect stub, a tracking pixel. ~70 words -- shorter than any real post, and
+# the bar only decides whether to *try the next route*, never whether to give up.
+MIN_ARTICLE_CHARS = 400
+
+
 class FetchError(Exception):
     """Raised when a URL can't be downloaded or has no extractable article."""
+
+
+def is_thin(text: str) -> bool:
+    """True when there is too little text for this to be the article we asked for."""
+    return len(" ".join((text or "").split())) < MIN_ARTICLE_CHARS
 
 
 @dataclass

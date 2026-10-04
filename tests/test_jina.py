@@ -5,6 +5,10 @@ from second_brain.fetcher import Article, FetchError
 from second_brain.jina import fetch_jina
 
 
+ARTICLE = "A real article, with enough words in it to be one. " * 20
+THIN = "A 1x1 image, likely be a tacker probe"  # what a poisoned cache served
+
+
 def _resp(status=200, data=None):
     return SimpleNamespace(status_code=status, json=lambda: {"data": data or {}})
 
@@ -15,7 +19,7 @@ class FetchJinaTest(unittest.TestCase):
 
         def fake_get(url, **kwargs):
             seen.update(url=url, **kwargs)
-            return _resp(data={"title": "My Post", "content": "# md\n![Image 1: a chart](x)"})
+            return _resp(data={"title": "My Post", "content": f"# md\n![Image 1: a chart](x)\n{ARTICLE}"})
 
         art = fetch_jina("https://example.com/post", api_key="KEY", get=fake_get)
         self.assertIsInstance(art, Article)
@@ -31,7 +35,7 @@ class FetchJinaTest(unittest.TestCase):
         fetch_jina(
             "https://example.com/post",
             api_key="KEY",
-            get=lambda url, **k: seen.update(k) or _resp(data={"content": "x"}),
+            get=lambda url, **k: seen.update(k) or _resp(data={"content": ARTICLE}),
         )
         self.assertEqual(seen["headers"]["Authorization"], "Bearer KEY")
 
@@ -39,7 +43,7 @@ class FetchJinaTest(unittest.TestCase):
         seen = {}
         fetch_jina(
             "https://example.com/post",
-            get=lambda url, **k: seen.update(k) or _resp(data={"content": "x"}),
+            get=lambda url, **k: seen.update(k) or _resp(data={"content": ARTICLE}),
         )
         self.assertNotIn("Authorization", seen["headers"])
 
@@ -49,13 +53,51 @@ class FetchJinaTest(unittest.TestCase):
         seen = {}
         fetch_jina(
             "https://example.com/post",
-            get=lambda url, **k: seen.update(k) or _resp(data={"content": "x"}),
+            get=lambda url, **k: seen.update(k) or _resp(data={"content": ARTICLE}),
         )
         self.assertNotIn("X-With-Generated-Alt", seen["headers"])
 
     def test_http_error_raises(self):
         with self.assertRaises(FetchError):
             fetch_jina("https://example.com/post", get=lambda url, **k: _resp(status=451))
+
+    def test_a_cached_snapshot_of_junk_is_retried_without_the_cache(self):
+        """The failure this guards: Jina served a cached 37-character caption of a
+        1x1 ad pixel for a real article, and we filed it as a note."""
+        calls = []
+
+        def fake_get(url, **kwargs):
+            calls.append(kwargs["headers"])
+            thin = len(calls) == 1
+            return _resp(data={"title": "x", "content": THIN if thin else ARTICLE})
+
+        art = fetch_jina("https://example.com/post", get=fake_get)
+
+        self.assertIn(ARTICLE.strip()[:20], art.text)
+        self.assertEqual(len(calls), 2)
+        self.assertNotIn("X-No-Cache", calls[0])
+        self.assertEqual(calls[1]["X-No-Cache"], "true")
+
+    def test_thin_after_the_retry_raises_so_the_caller_falls_back(self):
+        calls = []
+
+        def fake_get(url, **kwargs):
+            calls.append(kwargs["headers"])
+            return _resp(data={"title": "x", "content": THIN})
+
+        with self.assertRaises(FetchError) as caught:
+            fetch_jina("https://example.com/post", get=fake_get)
+
+        self.assertEqual(len(calls), 2)  # tried, retried, gave up
+        self.assertIn("not the article", str(caught.exception))
+
+    def test_a_good_answer_is_not_retried(self):
+        calls = []
+        fetch_jina(
+            "https://example.com/post",
+            get=lambda url, **k: calls.append(k) or _resp(data={"content": ARTICLE}),
+        )
+        self.assertEqual(len(calls), 1)
 
     def test_empty_content_raises(self):
         with self.assertRaises(FetchError):

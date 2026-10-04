@@ -12,6 +12,10 @@ from second_brain.vault import Vault
 
 DATE = datetime.date(2026, 6, 30)
 
+# Captures below the article-length bar are refused now, so test bodies have to
+# look like articles. The marker stays at the front for the assertions.
+FILLER = " " + "enough words here to count as an article. " * 12
+
 
 def _settings(vault_path):
     return Settings.from_env(
@@ -50,7 +54,7 @@ class HandleUrlTest(unittest.TestCase):
     def test_happy_path_writes_note_and_replies(self):
         result = self._run(
             "check https://example.com/post",
-            fetch=lambda url: Article("Agentic Patterns", "body"),
+            fetch=lambda url: Article("Agentic Patterns", "body" + FILLER),
             summarize=lambda *a, **k: _summary(),
         )
         self.assertTrue(result.ok)
@@ -64,7 +68,7 @@ class HandleUrlTest(unittest.TestCase):
     def test_source_tag_reflects_the_fetcher(self):
         result = self._run(
             "https://youtu.be/dQw4w9WgXcQ",
-            fetch=lambda url: Article("A Talk", "transcript", source="youtube"),
+            fetch=lambda url: Article("A Talk", "transcript" + FILLER, source="youtube"),
             summarize=lambda *a, **k: _summary(),
         )
         self.assertIn("#youtube", result.reply)
@@ -79,7 +83,7 @@ class HandleUrlTest(unittest.TestCase):
         r1 = self._run(
             "https://youtu.be/dQw4w9WgXcQ",
             fetch=lambda url: Article(
-                "A Talk", "the raw transcript", source="youtube", kind="transcript"
+                "A Talk", "the raw transcript" + FILLER, source="youtube", kind="transcript"
             ),
             summarize=lambda *a, **k: _summary(),
         )
@@ -90,7 +94,7 @@ class HandleUrlTest(unittest.TestCase):
         # … and a plain article is archived too (the shift: always archive).
         r2 = self._run(
             "https://example.com/post",
-            fetch=lambda url: Article("Post", "the article body", source="article"),
+            fetch=lambda url: Article("Post", "the article body" + FILLER, source="article"),
             summarize=lambda *a, **k: _summary(),
         )
         a2 = self.vault.root / "sources" / f"{r2.note_path.stem}.source.md"
@@ -103,9 +107,25 @@ class HandleUrlTest(unittest.TestCase):
         self.assertEqual(result.reply, NO_URL_MESSAGE)
         self.assertEqual(list(self.vault.iter_notes()), [])
 
+    def test_a_page_that_gives_back_scraps_is_not_filed(self):
+        """A Databricks post once arrived as a 37-character caption of an ad pixel
+        (a poisoned reader cache) and was summarised and saved as a real note."""
+        summarized = []
+        result = self._run(
+            "https://example.com/post",
+            fetch=lambda url: Article("Ad pixel", "A 1x1 image, likely be a tacker probe"),
+            summarize=lambda *a, **k: summarized.append(a) or _summary(),
+        )
+
+        self.assertIn("almost no text", result.reply)
+        self.assertIsNone(result.note_path)
+        self.assertFalse(result.ok)
+        self.assertEqual(summarized, [])  # never sent to the model
+        self.assertEqual(list(self.vault.iter_notes()), [])
+
     def test_duplicate_url_is_reported_without_second_note(self):
         args = dict(
-            fetch=lambda url: Article("Agentic Patterns", "body"),
+            fetch=lambda url: Article("Agentic Patterns", "body" + FILLER),
             summarize=lambda *a, **k: _summary(),
         )
         first = self._run("https://example.com/post", **args)
@@ -153,7 +173,7 @@ class HandleUrlTest(unittest.TestCase):
         )
         result = self._run(
             "https://example.com/post",
-            fetch=lambda url: Article("t", "body"),
+            fetch=lambda url: Article("t", "body" + FILLER),
             summarize=lambda *a, **k: _summary(),
         )
         self.assertFalse(result.ok)
@@ -166,7 +186,7 @@ class HandleUrlTest(unittest.TestCase):
         )
         result = self._run(
             "https://example.com/post",
-            fetch=lambda url: Article("t", "body"),
+            fetch=lambda url: Article("t", "body" + FILLER),
             summarize=lambda *a, **k: _summary(),
         )
         self.assertFalse(result.ok)
@@ -178,7 +198,7 @@ class HandleUrlTest(unittest.TestCase):
 
         result = self._run(
             "https://example.com/post",
-            fetch=lambda url: Article("t", "body"),
+            fetch=lambda url: Article("t", "body" + FILLER),
             summarize=boom,
         )
         self.assertFalse(result.ok)

@@ -14,7 +14,7 @@ never to a third party.
 
 from __future__ import annotations
 
-from second_brain.fetcher import Article, FetchError
+from second_brain.fetcher import Article, FetchError, is_thin
 
 _ENDPOINT = "https://r.jina.ai/"
 
@@ -22,7 +22,11 @@ _ENDPOINT = "https://r.jina.ai/"
 def fetch_jina(url: str, *, api_key=None, get=None) -> Article:
     """Fetch `url` as Markdown (with image captions when a key is set) via Jina Reader.
 
-    Raises FetchError on any failure so the caller can fall back to trafilatura.
+    The reader serves a cached snapshot by default, and a cache can hold junk: a
+    Databricks post came back as a 37-character caption of a 1x1 ad-tracking
+    pixel a previous crawl had landed on. So a thin answer is retried once with
+    caching off, and if that is thin too this raises -- which is what lets the
+    caller fall through to trafilatura, which reads the page perfectly well.
     """
     get = get or _default_get
     headers = {"Accept": "application/json"}
@@ -32,6 +36,19 @@ def fetch_jina(url: str, *, api_key=None, get=None) -> Article:
         # whole request, so only ask when we can pay for it.
         headers["X-With-Generated-Alt"] = "true"
 
+    title, content = _read(url, headers, get)
+    if is_thin(content):
+        title, content = _read(url, {**headers, "X-No-Cache": "true"}, get)
+        if is_thin(content):
+            raise FetchError(
+                f"The reader service returned {len(content.split())} words, "
+                "which is not the article."
+            )
+    return Article(title=title or url, text=content, source="article", kind="article")
+
+
+def _read(url: str, headers: dict, get) -> tuple[str, str]:
+    """One call to the reader: its title and content, or a FetchError."""
     try:
         resp = get(_ENDPOINT + url, headers=headers, timeout=60)
     except Exception as exc:  # noqa: BLE001 — network/transport
@@ -45,9 +62,7 @@ def fetch_jina(url: str, *, api_key=None, get=None) -> Article:
     content = data.get("content")
     if not isinstance(content, str) or not content.strip():
         raise FetchError("The reader service returned no readable content.")
-
-    title = (data.get("title") or "").strip() or url
-    return Article(title=title, text=content, source="article", kind="article")
+    return (data.get("title") or "").strip(), content
 
 
 def _default_get(url: str, **kwargs):

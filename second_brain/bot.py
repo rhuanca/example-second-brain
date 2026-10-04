@@ -17,7 +17,7 @@ from pathlib import Path
 
 from second_brain.ask import ask as default_ask
 from second_brain.config import Settings
-from second_brain.fetcher import FetchError
+from second_brain.fetcher import FetchError, is_thin
 from second_brain.sources import fetch as default_fetch
 from second_brain.summarizer import SummarizerError
 from second_brain.summarizer import summarize as default_summarize
@@ -25,6 +25,12 @@ from second_brain.urls import extract_url
 from second_brain.vault import DuplicateNoteError, Vault
 
 logger = logging.getLogger(__name__)
+
+TOO_THIN_MESSAGE = (
+    "⚠️ That page gave back almost no text, so there's nothing worth "
+    "summarizing — it may be JavaScript-only, paywalled, or a redirect. "
+    "Nothing saved."
+)
 
 NO_URL_MESSAGE = (
     "Send me a link (http/https) and I'll summarize it and file it in your "
@@ -67,6 +73,12 @@ def handle_url(
         article = fetch(url)
     except FetchError as exc:
         return PipelineResult(f"⚠️ Couldn't read that article: {exc}")
+
+    # Every route came back with scraps. Summarizing those produces a confident
+    # note about a consent wall or a tracking pixel, which is worse than nothing:
+    # it looks like a real note in the vault forever.
+    if is_thin(article.text):
+        return PipelineResult(TOO_THIN_MESSAGE)
 
     try:
         summary = summarize(

@@ -3,6 +3,13 @@ import unittest
 from second_brain.fetcher import Article, FetchError
 from second_brain.sources import fetch
 
+# Routing tests care which route answered, not how much it said -- but a route
+# that answers with almost nothing is now demoted, so the bodies have to be the
+# length of a real article. The marker says which route produced it.
+def body(marker: str) -> str:
+    return f"{marker}: " + "enough words here to count as an article. " * 12
+
+
 
 class DispatchTest(unittest.TestCase):
     def test_youtube_url_routes_to_youtube_fetch(self):
@@ -32,10 +39,10 @@ class DispatchTest(unittest.TestCase):
         article = fetch(
             "https://example.com/post",
             jina_api_key="K",
-            jina_fetch=lambda url, api_key=None: Article("post", "jina md"),
+            jina_fetch=lambda url, api_key=None: Article("post", body("jina md")),
             article_fetch=lambda url: calls.setdefault("trafilatura", url),
         )
-        self.assertEqual(article.text, "jina md")
+        self.assertIn("jina md", article.text)
         self.assertNotIn("trafilatura", calls)  # trafilatura not used when Jina works
 
     def test_jina_skipped_without_key(self):
@@ -43,9 +50,9 @@ class DispatchTest(unittest.TestCase):
         article = fetch(
             "https://example.com/post",  # jina_api_key unset
             jina_fetch=lambda url, api_key=None: calls.setdefault("jina", url),
-            article_fetch=lambda url: Article("post", "trafilatura body"),
+            article_fetch=lambda url: Article("post", body("trafilatura body")),
         )
-        self.assertEqual(article.text, "trafilatura body")
+        self.assertIn("trafilatura body", article.text)
         self.assertNotIn("jina", calls)  # no key → captions unavailable → trafilatura
 
     def test_jina_failure_falls_back_to_trafilatura(self):
@@ -56,9 +63,9 @@ class DispatchTest(unittest.TestCase):
             "https://example.com/post",
             jina_api_key="K",
             jina_fetch=boom,
-            article_fetch=lambda url: Article("post", "trafilatura body"),
+            article_fetch=lambda url: Article("post", body("trafilatura body")),
         )
-        self.assertEqual(article.text, "trafilatura body")
+        self.assertIn("trafilatura body", article.text)
 
     def test_jina_disabled_uses_trafilatura_directly(self):
         calls = {}
@@ -67,9 +74,9 @@ class DispatchTest(unittest.TestCase):
             jina_enabled=False,
             jina_api_key="K",
             jina_fetch=lambda url, api_key=None: calls.setdefault("jina", url),
-            article_fetch=lambda url: Article("post", "trafilatura body"),
+            article_fetch=lambda url: Article("post", body("trafilatura body")),
         )
-        self.assertEqual(article.text, "trafilatura body")
+        self.assertIn("trafilatura body", article.text)
         self.assertNotIn("jina", calls)  # jina skipped when disabled
 
     def test_jina_receives_api_key(self):
@@ -79,7 +86,7 @@ class DispatchTest(unittest.TestCase):
             jina_api_key="JK",
             jina_fetch=lambda url, api_key=None: (
                 seen.update(api_key=api_key),
-                Article("p", "b"),
+                Article("p", body("jina")),
             )[1],
         )
         self.assertEqual(seen["api_key"], "JK")
@@ -89,13 +96,13 @@ class DispatchTest(unittest.TestCase):
         article = fetch(
             "https://medium.com/@u/slug-123",
             medium_cookie="SID",
-            article_fetch=lambda url: Article("teaser", "teaser body"),
+            article_fetch=lambda url: Article("teaser", body("teaser body")),
             medium_fetch=lambda url, cookie: (
                 seen.update(call=(url, cookie)),
-                Article("full", "full body"),
+                Article("full", body("full body")),
             )[1],
         )
-        self.assertEqual(article.text, "full body")
+        self.assertIn("full body", article.text)
         self.assertEqual(seen["call"], ("https://medium.com/@u/slug-123", "SID"))
 
     def test_medium_without_cookie_falls_back_to_article_fetch(self):
@@ -103,10 +110,10 @@ class DispatchTest(unittest.TestCase):
         article = fetch(
             "https://medium.com/@u/slug-123",
             medium_cookie=None,
-            article_fetch=lambda url: Article("teaser", "teaser body"),
+            article_fetch=lambda url: Article("teaser", body("teaser body")),
             medium_fetch=lambda url, cookie: calls.setdefault("medium", url),
         )
-        self.assertEqual(article.text, "teaser body")
+        self.assertIn("teaser body", article.text)
         self.assertNotIn("medium", calls)  # cookie missing → no cookie fetch
 
     def test_medium_failure_falls_through_to_jina(self):
@@ -120,10 +127,10 @@ class DispatchTest(unittest.TestCase):
             medium_cookie="SID",
             jina_api_key="K",
             medium_fetch=blocked,
-            jina_fetch=lambda url, api_key=None: Article("full", "jina body"),
-            article_fetch=lambda url: Article("teaser", "teaser body"),
+            jina_fetch=lambda url, api_key=None: Article("full", body("jina body")),
+            article_fetch=lambda url: Article("teaser", body("teaser body")),
         )
-        self.assertEqual(article.text, "jina body")
+        self.assertIn("jina body", article.text)
 
     def test_every_route_failing_raises_the_last_error(self):
         def blocked(url, cookie):
@@ -155,7 +162,7 @@ class DispatchTest(unittest.TestCase):
 
         def jina(url, **kwargs):
             seen.update(kwargs)
-            return Article("p", "b")
+            return Article("p", body("jina"))
 
         fetch(
             "https://medium.com/@u/slug-123",
@@ -166,6 +173,54 @@ class DispatchTest(unittest.TestCase):
         )
         self.assertEqual(set(seen), {"api_key"})
         self.assertNotIn("SID", str(seen))
+
+
+class ThinResultTest(unittest.TestCase):
+    """A route that answers with almost nothing has not read the page.
+
+    The case this comes from: Jina served a cached 37-character caption of a 1x1
+    ad pixel for a Databricks post, the chain stopped there, and the note was
+    filed from that. trafilatura reads the same page fine.
+    """
+
+    ARTICLE = "A real article, with enough words in it to be one. " * 20
+
+    def test_a_thin_answer_falls_through_to_the_next_route(self):
+        tried = []
+        article = fetch(
+            "https://example.com/post",
+            jina_api_key="K",
+            jina_fetch=lambda url, api_key=None: (
+                tried.append("jina"),
+                Article("Ad pixel", "A 1x1 image, likely be a tacker probe"),
+            )[1],
+            article_fetch=lambda url: (
+                tried.append("trafilatura"),
+                Article("The real post", self.ARTICLE),
+            )[1],
+        )
+        self.assertEqual(article.title, "The real post")
+        self.assertEqual(tried, ["jina", "trafilatura"])
+
+    def test_the_last_route_is_taken_however_short_it_is(self):
+        """Thinness only decides which route to prefer -- a short post still saves."""
+        article = fetch(
+            "https://example.com/post",
+            jina_api_key="K",
+            jina_fetch=lambda url, api_key=None: Article("thin", "barely anything"),
+            article_fetch=lambda url: Article("short post", "also short"),
+        )
+        self.assertEqual(article.text, "also short")
+
+    def test_a_full_answer_stops_the_chain(self):
+        tried = []
+        fetch(
+            "https://example.com/post",
+            jina_api_key="K",
+            jina_fetch=lambda url, api_key=None: Article("good", self.ARTICLE),
+            article_fetch=lambda url: tried.append("trafilatura"),
+        )
+        self.assertEqual(tried, [])
 
 
 if __name__ == "__main__":
