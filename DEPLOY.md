@@ -33,9 +33,11 @@ Idempotent — re-run any time. It:
    loader, so a bad `.env` stops the deploy with the same message the service
    would give.
 3. For `kb`, builds the embedding index (the model, ~130MB, downloads once into
-   `KB_INDEX_DIR`) and sandboxes the service with the vault read-only — or warns
-   and runs unsandboxed if this machine's systemd can't (some distros restrict
-   the user namespaces that needs).
+   `KB_INDEX_DIR`) and sandboxes the service (`NoNewPrivileges`, `PrivateTmp`) —
+   or warns and runs unsandboxed if this machine's systemd can't (some distros
+   restrict the user namespaces that needs). The vault is writable to this
+   service: deleting a note from the browse UI moves it into the vault's
+   `.trash/`, which is the only write it makes.
 4. Writes `~/.config/systemd/user/<service>.service`, restarts, and confirms each
    service stays up, printing its recent logs if it doesn't. A service with a
    broken config stops after 5 failed starts instead of restarting forever.

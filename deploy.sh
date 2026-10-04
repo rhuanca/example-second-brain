@@ -171,7 +171,7 @@ PY
 # unprivileged user namespaces, which some distros restrict).
 sandbox_supported() {
     systemd-run --user --quiet --wait --collect \
-        -p NoNewPrivileges=yes -p PrivateTmp=yes -p "ReadOnlyPaths=$1" /bin/true >/dev/null 2>&1
+        -p NoNewPrivileges=yes -p PrivateTmp=yes -p "ReadWritePaths=$1" /bin/true >/dev/null 2>&1
 }
 
 write_unit() {  # service, vault dir, sandbox (true/false) -> unit text on stdout
@@ -196,10 +196,14 @@ EOF
     if [[ "$service" == "kb" && "$sandbox" == true ]]; then
         cat <<EOF
 
-# Sandboxing: the knowledge base only reads the vault, so the kernel enforces it.
+# Sandboxing. The vault was mounted read-only here until the browse UI grew a
+# Delete button: deleting moves a note into the vault's .trash/, which is a
+# write. That is the only writing this service does to the vault. The locks that
+# matter are unchanged -- it listens on loopback only, every POST must come from
+# its own pages, and no MCP tool can write.
 NoNewPrivileges=true
 PrivateTmp=true
-ReadOnlyPaths="$vault"
+ReadWritePaths="$vault"
 EOF
     fi
     cat <<EOF

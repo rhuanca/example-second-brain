@@ -210,7 +210,12 @@ uv run python -m second_brain.kb.main                 # http://127.0.0.1:8765
   **candidates**: notes over 90 days old, unstarred, and not read in 90 days on
   the web or by an agent (`get_note` / `get_source`). Agents see `starred` in
   search results and can search starred notes only, but cannot change either.
-  This lives in `KB_STATE_DB`, not in the notes: the vault stays read-only.
+  This lives in `KB_STATE_DB`, not in the notes.
+- **Delete.** A note you never wanted — a bad capture, a paywalled teaser — can
+  be deleted from its page. It asks first, then moves the note *and* its captured
+  text into the vault's hidden `.trash/`, listed at `/trash` where you restore or
+  empty. Nothing is purged on a schedule, and agents cannot delete: the MCP tools
+  stay read-only.
 - **Topics** come from `scripts/discover_topics.py` (see "Knowledge" below); until
   it has run, everything still works and notes show as "not in any topic".
 - New captures are picked up automatically (the index updates only what changed).
@@ -370,8 +375,8 @@ flowchart LR
 |---|---|
 | `main.py` → `rr-second-brain-telegram` | Capture. The only writer. |
 | `slack_main.py` → `rr-second-brain-slack` | Ask-only. A link here gets a nudge to use Telegram. |
-| `kb/main.py` → `rr-second-brain-kb` | MCP + browse UI on `127.0.0.1:8765`. Reads the vault (mounted read-only), writes only its index and state. |
-| Obsidian vault | Source of truth. Flat `*.md` + `sources/*.source.md` archives. |
+| `kb/main.py` → `rr-second-brain-kb` | MCP + browse UI on `127.0.0.1:8765`. Reads the vault; its only write there is moving a deleted note into `.trash/`. |
+| Obsidian vault | Source of truth. Flat `*.md` + `sources/*.source.md` archives, with deleted notes parked in `.trash/`. |
 | `second_brain/kb/topics.json` | The taxonomy, versioned in git so drift is visible. |
 | `KB_INDEX_DIR` | Embedding vectors + manifest + the downloaded model. Derived, rebuildable, outside the vault. |
 | `KB_STATE_DB` | SQLite: stars, archive flags, read counts, saved chats. Your data, **not** rebuildable: back it up with the vault. |
