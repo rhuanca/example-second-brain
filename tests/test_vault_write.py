@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from second_brain.models import Summary
-from second_brain.vault import DuplicateNoteError, Vault
+from second_brain.vault import SOURCES_DIR, DuplicateNoteError, Vault
 
 DATE = datetime.date(2026, 6, 30)
 
@@ -146,3 +146,97 @@ class VaultWriteTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TrashTest(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.vault = Vault(self.root)
+
+    def write(self, title="Building Agentic Systems", archive="the captured text"):
+        return self.vault.write_note(
+            _summary(title=title), f"https://example.com/{title}", DATE, archive=archive
+        )
+
+    def test_trashing_takes_the_archive_with_it_and_hides_both(self):
+        note = self.write()
+        archive = self.root / SOURCES_DIR / f"{note.stem}.source.md"
+        self.assertTrue(archive.is_file())
+
+        name = self.vault.trash(note)
+
+        self.assertEqual(name, note.name)
+        self.assertFalse(note.exists())
+        self.assertFalse(archive.exists())
+        self.assertTrue((self.vault.trash_dir / name).is_file())
+        self.assertTrue((self.vault.trash_dir / f"{note.stem}.source.md").is_file())
+        # Invisible to everything that reads the vault (and to Obsidian).
+        self.assertEqual(list(self.vault.iter_notes()), [])
+
+    def test_a_note_without_an_archive_still_trashes(self):
+        note = self.write(archive=None)
+        self.assertEqual(self.vault.trash(note), note.name)
+        self.assertEqual([n.has_archive for n in self.vault.trashed()], [False])
+
+    def test_trashed_lists_what_is_there(self):
+        note = self.write()
+        self.vault.trash(note)
+
+        (trashed,) = self.vault.trashed()
+
+        self.assertEqual(trashed.name, note.name)
+        self.assertEqual(trashed.title, "Building Agentic Systems")
+        self.assertEqual(trashed.source, "https://example.com/Building Agentic Systems")
+        self.assertTrue(trashed.has_archive)
+
+    def test_restore_puts_the_pair_back(self):
+        note = self.write()
+        self.vault.trash(note)
+
+        restored = self.vault.restore(note.name)
+
+        self.assertEqual(restored, note)
+        self.assertTrue(restored.is_file())
+        self.assertTrue((self.root / SOURCES_DIR / f"{note.stem}.source.md").is_file())
+        self.assertEqual(self.vault.trashed(), [])
+
+    def test_restore_never_overwrites_a_replacement(self):
+        """Re-capturing the same article after deleting it must not be clobbered."""
+        note = self.write()
+        self.vault.trash(note)
+        again = self.write()  # same title+date, so the same filename
+        self.assertEqual(again, note)
+
+        restored = self.vault.restore(note.name)
+
+        self.assertNotEqual(restored, again)
+        self.assertTrue(again.is_file())
+        self.assertIn("the captured text", (self.root / SOURCES_DIR / f"{restored.stem}.source.md").read_text())
+
+    def test_restore_refuses_anything_not_in_the_listing(self):
+        self.write()
+        for name in ["nope.md", "../secret.md", None, 5, ""]:
+            with self.subTest(name=name):
+                self.assertIsNone(self.vault.restore(name))
+
+    def test_empty_trash_counts_the_notes_it_removed(self):
+        for title in ["One", "Two"]:
+            self.vault.trash(self.write(title=title))
+
+        self.assertEqual(self.vault.empty_trash(), 2)
+        self.assertEqual(self.vault.trashed(), [])
+        self.assertEqual(list(self.vault.trash_dir.glob("*")), [])
+        self.assertEqual(self.vault.empty_trash(), 0)  # idempotent
+
+    def test_trash_refuses_a_path_from_outside_the_vault(self):
+        outside = Path(self._tmp.name).parent / "outside.md"
+        outside.write_text("secret", encoding="utf-8")
+        self.addCleanup(outside.unlink)
+        self.assertIsNone(self.vault.trash(outside))
+        self.assertTrue(outside.is_file())
+
+    def test_an_empty_vault_has_an_empty_trash(self):
+        self.assertEqual(self.vault.trashed(), [])
+        self.assertEqual(self.vault.empty_trash(), 0)

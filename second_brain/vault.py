@@ -9,6 +9,7 @@ from __future__ import annotations
 import datetime as _dt
 import re
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
 import frontmatter
@@ -23,6 +24,12 @@ _slug_strip_re = re.compile(r"[^a-z0-9]+")
 # `<note-stem>.source.md`. The `.source.md` marker makes archives findable by
 # extension regardless of folder, so a future reorg is a bulk glob.
 SOURCES_DIR = "sources"
+
+# Deleted notes move here rather than being unlinked, so a misclick in the web UI
+# costs nothing. A dot-folder is invisible to `iter_notes` (which globs the root)
+# and to Obsidian, so a trashed note leaves the library in every sense that
+# matters while the file is still there.
+TRASH_DIR = ".trash"
 
 
 def slugify(title: str) -> str:
@@ -105,11 +112,26 @@ class DuplicateNoteError(Exception):
         self.existing = existing
 
 
+@dataclass(frozen=True)
+class TrashedNote:
+    """One note in the trash: enough to recognise it and put it back."""
+
+    name: str  # the file name inside .trash, which is also the restore handle
+    title: str
+    source: str = ""
+    date: str = ""
+    has_archive: bool = False
+
+
 class Vault:
     """A dedicated Obsidian vault rooted at a directory on disk (flat layout)."""
 
     def __init__(self, root: Path):
         self.root = Path(root)
+
+    @property
+    def trash_dir(self) -> Path:
+        return self.root / TRASH_DIR
 
     def ensure_folders(self) -> None:
         """Create the vault root directory if it doesn't exist."""
@@ -179,6 +201,89 @@ class Vault:
         )
         return path
 
+    # --- trash ------------------------------------------------------------------
+
+    def trash(self, note: Path) -> str | None:
+        """Move a note and its archive into the trash. Returns the trashed name.
+
+        None when the note isn't in this vault -- callers pass paths they got from
+        the vault itself, and this is the backstop if one ever doesn't.
+        """
+        note = Path(note)
+        if not note.is_file() or note.parent.resolve() != self.root.resolve():
+            return None
+        self.trash_dir.mkdir(parents=True, exist_ok=True)
+        target = _unique_path(self.trash_dir, note.name)
+        archive = self.root / SOURCES_DIR / f"{note.stem}.source.md"
+        if archive.is_file():
+            archive.rename(self.trash_dir / f"{target.stem}.source.md")
+        note.rename(target)
+        return target.name
+
+    def trashed(self) -> list[TrashedNote]:
+        """What is in the trash, newest first."""
+        if not self.trash_dir.is_dir():
+            return []
+        notes = []
+        for path in self.trash_dir.glob("*.md"):
+            if path.name.endswith(".source.md"):
+                continue  # the companion archive, listed with its note
+            notes.append(
+                TrashedNote(
+                    name=path.name,
+                    title=_read_field(path, "title") or path.stem,
+                    source=_read_field(path, "source") or "",
+                    date=_read_field(path, "date") or "",
+                    has_archive=(self.trash_dir / f"{path.stem}.source.md").is_file(),
+                )
+            )
+        notes.sort(key=lambda n: (n.date, n.name), reverse=True)
+        return notes
+
+    def restore(self, name: object) -> Path | None:
+        """Put a trashed note (and its archive) back. None if there is no such note.
+
+        `name` comes from a web form, so it is matched against the listing rather
+        than joined into a path.
+        """
+        if not isinstance(name, str) or name not in {n.name for n in self.trashed()}:
+            return None
+        source = self.trash_dir / name
+        # A replacement may have been captured since; never overwrite it.
+        target = self._free_name(name)
+        archive = self.trash_dir / f"{source.stem}.source.md"
+        if archive.is_file():
+            folder = self.root / SOURCES_DIR
+            folder.mkdir(parents=True, exist_ok=True)
+            archive.rename(folder / f"{target.stem}.source.md")
+        source.rename(target)
+        return target
+
+    def _free_name(self, filename: str) -> Path:
+        """A root path whose note *and* archive names are both free.
+
+        An archive is found at `sources/<note stem>.source.md`, so the pair has to
+        move together: a free note name beside an occupied archive name would
+        restore a note pointing at someone else's text.
+        """
+        stem = Path(filename).stem
+        folder = self.root / SOURCES_DIR
+        for suffix in ["", *[f"-{n}" for n in range(2, 1000)]]:
+            note = self.root / f"{stem}{suffix}.md"
+            if not note.exists() and not (folder / f"{stem}{suffix}.source.md").exists():
+                return note
+        raise FileExistsError(f"Too many filename collisions for {filename}")
+
+    def empty_trash(self) -> int:
+        """Delete everything in the trash for good. Returns how many notes went."""
+        if not self.trash_dir.is_dir():
+            return 0
+        count = len(self.trashed())
+        for path in self.trash_dir.glob("*"):
+            if path.is_file():
+                path.unlink()
+        return count
+
 
 def _unique_path(folder: Path, filename: str) -> Path:
     """Return a non-colliding path in `folder`, suffixing -2, -3, ... if needed.
@@ -198,9 +303,21 @@ def _unique_path(folder: Path, filename: str) -> Path:
 
 
 def _read_source(note: Path) -> str | None:
+    return _read_field(note, "source")
+
+
+def _read_field(note: Path, field: str) -> str | None:
     try:
         post = frontmatter.load(str(note))
     except Exception:
         return None
-    source = post.get("source")
-    return source if isinstance(source, str) else None
+    value = post.get(field) if field != "title" else (post.get("title") or _heading(post.content))
+    return str(value) if value is not None and not isinstance(value, (list, dict)) else None
+
+
+def _heading(body: str) -> str | None:
+    """The note's `# ` heading, which is where the title lives in our notes."""
+    for line in (body or "").splitlines():
+        if line.startswith("# "):
+            return line[2:].strip()
+    return None
