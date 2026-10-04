@@ -31,7 +31,7 @@ from second_brain.kb.notes import Card, archive_path, load_cards
 from second_brain.kb.state import NoteState, ReadStats
 from second_brain.kb.topics import Taxonomy, Topic, load_taxonomy
 from second_brain.kb.visuals import Point, map_layout
-from second_brain.vault import Vault
+from second_brain.vault import TrashedNote, Vault
 
 # bge-small cosines sit in a narrow, high band: on a sample vault unrelated notes
 # scored 0.53-0.61 and the right note 0.73-0.84. Recalibrate on the real vault;
@@ -201,6 +201,35 @@ class Library:
         card = self.card(note_id)
         if card is not None and self._state is not None:
             self._state.record_read(card.note_id, channel)
+
+    def delete(self, note_id: object) -> bool:
+        """Move a known note to the vault's trash. False if the id is unknown.
+
+        The id is resolved through `card()` first, so a caller can only ever name
+        a note the vault enumerated -- never a path. The index is refreshed at
+        once rather than within the TTL, so the note leaves the lists, the map and
+        search with the redirect that follows.
+        """
+        card = self.card(note_id)
+        if card is None or card.path is None:
+            return False
+        if self.vault.trash(card.path) is None:
+            return False
+        self.refresh_if_stale(force=True)
+        return True
+
+    def trashed(self) -> list[TrashedNote]:
+        return self.vault.trashed()
+
+    def restore(self, name: object) -> bool:
+        """Put a trashed note back; its stars and read counts are still keyed to it."""
+        if self.vault.restore(name) is None:
+            return False
+        self.refresh_if_stale(force=True)
+        return True
+
+    def empty_trash(self) -> int:
+        return self.vault.empty_trash()
 
     def read_stats(self) -> dict[str, ReadStats]:
         return self._state.read_stats() if self._state else {}

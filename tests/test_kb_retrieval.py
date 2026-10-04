@@ -284,5 +284,52 @@ class NoteStateTest(_Base):
         self.assertEqual(lib.read_stats(), {})
 
 
+class DeleteTest(_Base):
+    def setUp(self):
+        super().setUp()
+        self.state = NoteState(Path(self._tmp.name) / "state.db")
+        self.lib = self.library(state=self.state)
+        write_archive(self.root, "memory", "the full captured text")
+
+    def test_deleting_drops_the_note_from_everything_at_once(self):
+        self.assertTrue(self.lib.delete("memory"))
+
+        self.assertNotIn("memory", [c.note_id for c in self.lib.cards(include_archived=True)])
+        self.assertIsNone(self.lib.card("memory"))
+        self.assertNotIn("memory", [h.card.note_id for h in self.lib.search("vector memory")])
+        self.assertNotIn("memory", [p.note_id for p in self.lib.map_points(800, 500)])
+        self.assertEqual([t.name for t in self.lib.trashed()], ["memory.md"])
+
+    def test_unknown_and_crafted_ids_delete_nothing(self):
+        for note_id in ["nope", "../vault/memory", "memory.md", None, 7]:
+            with self.subTest(note_id=note_id):
+                self.assertFalse(self.lib.delete(note_id))
+        self.assertEqual(len(self.lib.cards()), 3)
+        self.assertEqual(self.lib.trashed(), [])
+
+    def test_restoring_brings_the_note_and_its_history_back(self):
+        self.lib.set_starred("memory", True)
+        self.lib.record_read("memory", "web")
+        self.lib.delete("memory")
+
+        self.assertTrue(self.lib.restore("memory.md"))
+
+        self.assertIsNotNone(self.lib.card("memory"))
+        self.assertTrue(self.lib.is_starred("memory"))
+        self.assertEqual(self.lib.read_stats()["memory"].web, 1)
+        self.assertIsNotNone(self.lib.archive_text("memory"))
+
+    def test_restoring_something_that_is_not_there(self):
+        self.assertFalse(self.lib.restore("nope.md"))
+        self.assertFalse(self.lib.restore(None))
+
+    def test_emptying_the_trash(self):
+        self.lib.delete("memory")
+        self.lib.delete("rag")
+        self.assertEqual(self.lib.empty_trash(), 2)
+        self.assertEqual(self.lib.trashed(), [])
+        self.assertFalse(self.lib.restore("memory.md"))
+
+
 if __name__ == "__main__":
     unittest.main()
