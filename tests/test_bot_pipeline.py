@@ -7,7 +7,15 @@ from second_brain.config import Settings
 from second_brain.fetcher import Article, FetchError
 from second_brain.models import Summary
 from second_brain.summarizer import SummarizerError
-from second_brain.bot import NO_URL_MESSAGE, handle_document, handle_url
+from second_brain.bot import (
+    DUPLICATE,
+    FAILED,
+    NO_URL_MESSAGE,
+    NOTHING,
+    SAVED,
+    handle_document,
+    handle_url,
+)
 from second_brain.vault import Vault
 
 DATE = datetime.date(2026, 6, 30)
@@ -288,3 +296,59 @@ class HandleDocumentTest(unittest.TestCase):
         result = self._run(extract=lambda data, name: Article("x", "two words", source="pdf"))
         self.assertIn("almost no text", result.reply)
         self.assertEqual(list(self.vault.iter_notes()), [])
+
+
+class OutcomeTest(unittest.TestCase):
+    """What the bot's reaction reports: `ok` cannot tell "already saved" from
+    "couldn't read it", and those deserve different emoji."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.vault = Vault(Path(self._tmp.name))
+        self.settings = _settings(self._tmp.name)
+
+    def link(self, text="https://example.com/post", **kw):
+        kw.setdefault("fetch", lambda url: Article("A Post", "body" + FILLER))
+        kw.setdefault("summarize", lambda *a, **k: _summary())
+        kw.setdefault("today", lambda: DATE)
+        return handle_url(text, vault=self.vault, settings=self.settings, **kw)
+
+    def test_a_saved_note(self):
+        self.assertEqual(self.link().outcome, SAVED)
+
+    def test_no_link_at_all(self):
+        self.assertEqual(self.link("hello there").outcome, NOTHING)
+
+    def test_a_duplicate_url(self):
+        self.link()
+        self.assertEqual(self.link().outcome, DUPLICATE)
+
+    def test_a_duplicate_file(self):
+        pdf = b"%PDF-1.4 bytes"
+        common = dict(
+            vault=self.vault,
+            settings=self.settings,
+            extract=lambda data, name: Article("A Paper", "text" + FILLER, source="pdf"),
+            summarize=lambda *a, **k: _summary(),
+            today=lambda: DATE,
+        )
+        self.assertEqual(handle_document(pdf, "a.pdf", **common).outcome, SAVED)
+        self.assertEqual(handle_document(pdf, "b.pdf", **common).outcome, DUPLICATE)
+
+    def test_everything_that_goes_wrong_is_a_failure(self):
+        def boom_fetch(url):
+            raise FetchError("dead link")
+
+        def boom_summarize(*a, **k):
+            raise SummarizerError("no key")
+
+        cases = {
+            "fetch": self.link(fetch=boom_fetch),
+            "thin": self.link(fetch=lambda url: Article("x", "two words")),
+            "summarize": self.link(summarize=boom_summarize),
+        }
+        for name, result in cases.items():
+            with self.subTest(case=name):
+                self.assertEqual(result.outcome, FAILED)
+                self.assertFalse(result.ok)

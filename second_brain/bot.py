@@ -50,11 +50,17 @@ NO_URL_MESSAGE = (
 )
 
 
+# What a capture ended as. `ok` says whether a note was written; this says why
+# not, which is what the bot's reaction to your message reports.
+SAVED, DUPLICATE, FAILED, NOTHING = "saved", "duplicate", "failed", "nothing"
+
+
 @dataclass
 class PipelineResult:
     reply: str
     note_path: Path | None = None
     ok: bool = False
+    outcome: str = FAILED
 
 
 def handle_url(
@@ -75,16 +81,18 @@ def handle_url(
 
     url = extract_url(text)
     if not url:
-        return PipelineResult(NO_URL_MESSAGE)
+        return PipelineResult(NO_URL_MESSAGE, outcome=NOTHING)
 
     existing = vault.find_by_url(url)
     if existing is not None:
-        return PipelineResult(f"📌 Already in your second brain: {existing.name}")
+        return PipelineResult(
+            f"📌 Already in your second brain: {existing.name}", outcome=DUPLICATE
+        )
 
     try:
         article = fetch(url)
     except FetchError as exc:
-        return PipelineResult(f"⚠️ Couldn't read that article: {exc}")
+        return PipelineResult(f"⚠️ Couldn't read that article: {exc}", outcome=FAILED)
 
     return _capture(
         article, url, vault=vault, settings=settings, summarize=summarize, today=today
@@ -111,12 +119,14 @@ def handle_document(
 
     existing = vault.find_by_url(source)
     if existing is not None:
-        return PipelineResult(f"📌 Already in your second brain: {existing.name}")
+        return PipelineResult(
+            f"📌 Already in your second brain: {existing.name}", outcome=DUPLICATE
+        )
 
     try:
         article = extract(data, filename)
     except FetchError as exc:
-        return PipelineResult(f"⚠️ Couldn't read that file: {exc}")
+        return PipelineResult(f"⚠️ Couldn't read that file: {exc}", outcome=FAILED)
     article.original = data  # keep the file itself: the text has no diagrams
 
     return _capture(
@@ -142,7 +152,7 @@ def _capture(
     # note about a consent wall or a tracking pixel, which is worse than nothing:
     # it looks like a real note in the vault forever.
     if is_thin(article.text):
-        return PipelineResult(TOO_THIN_MESSAGE)
+        return PipelineResult(TOO_THIN_MESSAGE, outcome=FAILED)
 
     try:
         summary = summarize(
@@ -152,7 +162,7 @@ def _capture(
             api_key=settings.anthropic_api_key,
         )
     except SummarizerError as exc:
-        return PipelineResult(f"⚠️ Couldn't summarize that article: {exc}")
+        return PipelineResult(f"⚠️ Couldn't summarize that article: {exc}", outcome=FAILED)
 
     summary.tags = _with_source_tag(summary.tags, article.source)
 
@@ -169,12 +179,14 @@ def _capture(
         )
     except DuplicateNoteError as exc:
         return PipelineResult(
-            f"📌 Already in your second brain: {exc.existing.name}"
+            f"📌 Already in your second brain: {exc.existing.name}", outcome=DUPLICATE
         )
     except OSError as exc:
-        return PipelineResult(f"⚠️ Couldn't save the note: {exc}")
+        return PipelineResult(f"⚠️ Couldn't save the note: {exc}", outcome=FAILED)
 
-    return PipelineResult(_render_reply(summary, path), note_path=path, ok=True)
+    return PipelineResult(
+        _render_reply(summary, path), note_path=path, ok=True, outcome=SAVED
+    )
 
 
 def _render_reply(summary, path: Path) -> str:
