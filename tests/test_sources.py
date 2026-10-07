@@ -223,5 +223,45 @@ class ThinResultTest(unittest.TestCase):
         self.assertEqual(tried, [])
 
 
+class LinkedPdfTest(unittest.TestCase):
+    """A reader converts a linked PDF fine, but called it an article named
+    `1706.03762v7.pdf`, so the PDF icon in the browse UI never showed."""
+
+    PAPER = "# Attention Is All You Need\n\n" + "The dominant sequence models are. " * 20
+
+    def fetch_pdf(self, title, text=None, url="https://arxiv.org/pdf/1706.03762.pdf"):
+        return fetch(
+            url,
+            jina_api_key="K",
+            jina_fetch=lambda u, api_key=None: Article(title, text or self.PAPER),
+        )
+
+    def test_a_pdf_link_is_tagged_as_a_pdf(self):
+        article = self.fetch_pdf("1706.03762v7.pdf")
+        self.assertEqual((article.source, article.kind), ("pdf", "pdf"))
+
+    def test_a_filename_title_is_replaced_by_the_papers_own(self):
+        self.assertEqual(self.fetch_pdf("1706.03762v7.pdf").title, "Attention Is All You Need")
+
+    def test_a_real_title_from_the_reader_is_kept(self):
+        self.assertEqual(self.fetch_pdf("Attention Is All You Need").title,
+                         "Attention Is All You Need")
+
+    def test_an_extensionless_pdf_url_is_caught_by_its_title(self):
+        """arxiv.org/pdf/1706.03762 is a PDF with no extension in the path."""
+        article = self.fetch_pdf("1706.03762v7.pdf", url="https://arxiv.org/pdf/1706.03762")
+        self.assertEqual((article.source, article.kind), ("pdf", "pdf"))
+        self.assertEqual(article.title, "Attention Is All You Need")
+
+    def test_a_query_string_does_not_hide_the_extension(self):
+        article = self.fetch_pdf("x.pdf", url="https://example.com/paper.pdf?download=1")
+        self.assertEqual(article.source, "pdf")
+
+    def test_an_ordinary_page_is_untouched(self):
+        article = self.fetch_pdf("A Blog Post", url="https://example.com/post")
+        self.assertEqual((article.source, article.kind, article.title),
+                         ("article", "article", "A Blog Post"))
+
+
 if __name__ == "__main__":
     unittest.main()

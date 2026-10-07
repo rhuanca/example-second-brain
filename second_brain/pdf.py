@@ -38,21 +38,29 @@ def extract_pdf(data: bytes, filename: str = "", *, reader=None) -> Article:
     )
 
 
+# Longer than this and the line is a sentence, not a title. Papers open with
+# licence boilerplate often enough -- the arXiv transformer paper leads with
+# Google's reproduction notice -- that the first line cannot simply be trusted.
+TITLE_MAX = 110
+TITLE_SEARCH_LINES = 30
+
+
 def title_from(text: str, fallback: str = "") -> str:
-    """A title from the content: its first heading, else its first real line."""
-    for line in (text or "").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        if line.startswith("#"):
-            return line.lstrip("#").strip() or fallback
-        # A first line that is already a sentence makes a poor title.
-        return line if len(line) <= 120 else fallback
+    """A title from the content: the first line short enough to be one."""
+    for line in (text or "").splitlines()[:TITLE_SEARCH_LINES]:
+        candidate = line.strip().lstrip("#").strip()
+        if candidate and len(candidate) <= TITLE_MAX:
+            return candidate
     return fallback
 
 
 def looks_like_a_filename(title: str) -> bool:
-    """True for titles that are really file names, e.g. `1706.03762v7.pdf`."""
+    """True for titles that are really file names, e.g. `1706.03762v7.pdf`.
+
+    Also the most reliable sign that a link *was* a PDF: arXiv and many hosts
+    serve one from an extensionless URL, and the reader then titles it with the
+    file it actually downloaded.
+    """
     return bool(title) and title.strip().lower().endswith(".pdf")
 
 

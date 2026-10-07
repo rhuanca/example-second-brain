@@ -24,9 +24,14 @@ class TitleTest(unittest.TestCase):
     def test_otherwise_the_first_short_line(self):
         self.assertEqual(title_from("Attention Is All You Need\n\nbody"), "Attention Is All You Need")
 
-    def test_a_long_first_line_is_a_sentence_not_a_title(self):
-        text = "x" * 200 + "\nmore"
-        self.assertEqual(title_from(text, "fallback"), "fallback")
+    def test_a_long_opening_line_is_skipped_for_the_next_one(self):
+        """Papers open with licence boilerplate: the arXiv transformer paper leads
+        with Google's reproduction notice, then the actual title."""
+        text = "## " + "Provided proper attribution is provided, " * 5 + "\nAttention Is All You Need"
+        self.assertEqual(title_from(text, "fallback"), "Attention Is All You Need")
+
+    def test_nothing_short_enough_falls_back(self):
+        self.assertEqual(title_from("\n".join(["x" * 200] * 40), "fallback"), "fallback")
 
     def test_empty_text_falls_back(self):
         self.assertEqual(title_from("   \n\n", "fallback"), "fallback")

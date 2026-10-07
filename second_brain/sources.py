@@ -8,6 +8,10 @@ order of how much it can recover, falling through on failure:
   2. Jina Reader       Markdown + image captions, when a key is set
   3. trafilatura       no key, no service; the floor
 
+A link that points at a PDF is still fetched this way -- the reader converts it
+to Markdown -- but it is labelled `pdf` so it carries the same tag and icon as a
+PDF sent to the bot.
+
 The session cookie is used only by route 1, which runs on this machine. It is a
 full Medium login, so it is never forwarded to Jina or any other service; what
 route 2 recovers for a member-only article is the public teaser.
@@ -26,7 +30,10 @@ returns is accepted, so a genuinely short post still gets through.
 
 from __future__ import annotations
 
+from urllib.parse import urlsplit
+
 from second_brain.fetcher import Article, FetchError, is_thin
+from second_brain.pdf import looks_like_a_filename, title_from
 from second_brain.fetcher import fetch as _article_fetch
 from second_brain.jina import fetch_jina as _jina_fetch
 from second_brain.medium import fetch_medium as _medium_fetch
@@ -68,5 +75,24 @@ def fetch(
         except FetchError:
             continue  # the next route may still reach it
         if not is_thin(article.text):
-            return article
-    return routes[-1]()
+            return _label(article, url)
+    return _label(routes[-1](), url)
+
+
+def _label(article: Article, url: str) -> Article:
+    """Mark a linked PDF as one, and name it after its contents.
+
+    A reader hands back `1706.03762v7.pdf` as the title of a paper called
+    "Attention Is All You Need", and tags it as an article, so the PDF icon in
+    the browse UI never appeared for anything.
+    """
+    named_like_a_file = looks_like_a_filename(article.title)
+    # arxiv.org/pdf/1706.03762 has no extension at all, so the title the reader
+    # gives back -- the file it downloaded -- is the more reliable signal.
+    if not named_like_a_file and not urlsplit(url).path.lower().endswith(".pdf"):
+        return article
+    article.source = "pdf"
+    article.kind = "pdf"
+    if not article.title or named_like_a_file or article.title == url:
+        article.title = title_from(article.text, article.title)
+    return article
