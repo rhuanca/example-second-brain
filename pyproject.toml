@@ -26,3 +26,7 @@ dependencies = [
 browser = [
     "curl-cffi>=0.7",
 ]
+# Reading PDFs sent to the bot. Text layer only -- no OCR.
+pdf = [
+    "pypdf>=5",
+]

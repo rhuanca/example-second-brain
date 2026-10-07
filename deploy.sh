@@ -116,9 +116,9 @@ fi
 if $DRY_RUN; then
     [[ -d "$PROJECT_DIR/.venv" ]] || err "dry run needs an existing environment; run 'uv sync' first."
 else
-    step "Syncing dependencies (uv sync --extra browser)"
-    # The browser extra is what lets Medium capture past its bot challenge.
-    (cd "$PROJECT_DIR" && uv sync --extra browser)
+    step "Syncing dependencies (uv sync --extra browser --extra pdf)"
+    # browser: gets Medium capture past its bot challenge. pdf: reads uploads.
+    (cd "$PROJECT_DIR" && uv sync --extra browser --extra pdf)
 fi
 
 # Validate a service's configuration with the app's own loader and print the
