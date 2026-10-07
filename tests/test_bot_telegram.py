@@ -25,9 +25,11 @@ from second_brain.bot import (
     SAVED,
     WORKING,
     is_allowed,
+    TOPICS_USAGE,
     make_ask_handler,
     make_document_handler,
     make_handler,
+    make_topics_handler,
 )
 from second_brain.fetcher import Article
 from second_brain.config import Settings
@@ -376,3 +378,50 @@ class ReactionTest(unittest.TestCase):
         asyncio.run(handler(update, None))
 
         self.assertEqual(message.reactions, [])  # nothing started, nothing to mark
+
+
+class TopicsCommandTest(unittest.TestCase):
+    """Topics are refreshed on a timer without asking, so /topics is where you
+    see what happened and put it back."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.settings = _settings(self._tmp.name)
+        self.vault = Vault(Path(self._tmp.name))
+
+    def send(self, text, user_id=42):
+        handler = make_topics_handler(self.settings, self.vault)
+        update, message = _update(user_id, text)
+        asyncio.run(handler(update, None))
+        return message
+
+    def test_listing_the_taxonomy(self):
+        from unittest import mock
+
+        from second_brain.kb.topics import Taxonomy, Topic
+
+        tax = Taxonomy(topics=[Topic("a", "Agents", "", ["n1", "n2"])])
+        with mock.patch("second_brain.kb.topics.load_taxonomy", return_value=tax):
+            message = self.send("/topics")
+
+        self.assertIn("Agents — 2", message.replies[0])
+        self.assertEqual(message.reactions, [])  # reading is instant; no mark needed
+
+    def test_undo_runs_and_reports(self):
+        from unittest import mock
+
+        with mock.patch("second_brain.topics_admin.undo", return_value="↩️ Restored 3 topics") as undo:
+            message = self.send("/topics undo")
+
+        self.assertEqual(message.replies, ["↩️ Restored 3 topics"])
+        self.assertEqual(message.reactions, [WORKING, None])  # marked while it works
+        self.assertIn("write_notes", undo.call_args.kwargs)
+
+    def test_an_unknown_argument_explains_itself(self):
+        self.assertEqual(self.send("/topics wat").replies, [TOPICS_USAGE])
+
+    def test_strangers_get_nothing(self):
+        message = self.send("/topics undo", user_id=99)
+        self.assertEqual(message.replies, [])
+        self.assertEqual(message.reactions, [])

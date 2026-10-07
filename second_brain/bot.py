@@ -297,6 +297,7 @@ def build_application(settings: Settings, vault: Vault):
 
     app = Application.builder().token(settings.telegram_bot_token).build()
     app.add_handler(CommandHandler("ask", make_ask_handler(settings, vault)))
+    app.add_handler(CommandHandler("topics", make_topics_handler(settings, vault)))
     app.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
@@ -395,6 +396,11 @@ def make_handler(
     return handle
 
 
+TOPICS_USAGE = (
+    "/topics shows how your notes are filed. /topics undo puts back the taxonomy "
+    "from before the last refresh."
+)
+
 ASK_USAGE = (
     "Ask about your saved notes, e.g. /ask what have I saved about agent memory?"
 )
@@ -425,6 +431,58 @@ def make_ask_handler(settings: Settings, vault: Vault, *, run_ask=default_ask):
         await message.reply_text(reply)
 
     return handle
+
+
+def make_topics_handler(settings: Settings, vault: Vault):
+    """Create the async /topics command handler (allow-list enforced).
+
+    Topics are refreshed on a timer without asking, so this is where you see what
+    happened and undo it. Reading is instant; an undo rewrites frontmatter across
+    the vault, so it runs off the event loop like a capture does.
+    """
+    from second_brain import topics_admin
+    from second_brain.kb.topics import load_taxonomy
+
+    async def handle(update, context):
+        user = update.effective_user
+        if user is None or not is_allowed(user.id, settings):
+            return
+        message = update.effective_message
+        if message is None:
+            return
+        argument = _strip_command(message.text).strip().lower()
+
+        if not argument:
+            await message.reply_text(topics_admin.describe(load_taxonomy()))
+            return
+        if argument != "undo":
+            await message.reply_text(TOPICS_USAGE)
+            return
+
+        await _react(message, WORKING)
+        reply = await _run_with_typing(
+            message,
+            asyncio.to_thread(
+                topics_admin.undo,
+                write_notes=lambda assignments: _write_topics(vault, assignments),
+            ),
+        )
+        await _react(message, None)
+        await message.reply_text(reply)
+
+    return handle
+
+
+def _write_topics(vault: Vault, assignments: dict[str, list[str]]) -> list:
+    """Apply topic assignments to note frontmatter (the discovery script's writer)."""
+    import importlib.util
+    from pathlib import Path as _Path
+
+    script = _Path(__file__).resolve().parent.parent / "scripts" / "discover_topics.py"
+    spec = importlib.util.spec_from_file_location("discover_topics", script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.write_topics(vault.root, assignments)
 
 
 def _strip_command(text: str | None) -> str:
