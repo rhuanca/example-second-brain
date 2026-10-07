@@ -217,6 +217,30 @@ def _with_source_tag(tags: list[str], source: str) -> list[str]:
 
 _TYPING_REFRESH_SECONDS = 4  # Telegram's typing indicator lasts ~5s; refresh it.
 
+# A reaction on your own message, as feedback that outlives the typing dots: it
+# survives in the chat history, so every link shows what became of it. Telegram
+# accepts only the 73 emoji in telegram.constants.ReactionEmoji -- ✅, ❌ and ⚠️
+# are not among them, which is why "done" is 💯 rather than a tick.
+WORKING = "👀"
+REACTIONS = {SAVED: "💯", DUPLICATE: "🤔", FAILED: "😢", NOTHING: None}
+
+
+async def _react(message, emoji: str | None) -> None:
+    """Set (or clear, with None) the reaction on a message. Best-effort.
+
+    Cosmetic like the typing indicator, and swallowed the same way -- but logged,
+    because a reaction that silently never arrives is indistinguishable from one
+    that was never attempted.
+    """
+    react = getattr(message, "set_reaction", None)
+    if react is None:
+        logger.warning("no reaction: %s has no set_reaction", type(message).__name__)
+        return
+    try:
+        await react(emoji)
+    except Exception as exc:  # noqa: BLE001 — feedback is cosmetic
+        logger.warning("reaction %r failed: %s: %s", emoji, type(exc).__name__, exc)
+
 
 async def _send_typing(message) -> None:
     """Show the 'typing…' chat action. Best-effort — never fails the request.
@@ -308,6 +332,7 @@ def make_document_handler(
         if (getattr(document, "file_size", 0) or 0) > MAX_PDF_BYTES:
             await message.reply_text(TOO_BIG_MESSAGE)
             return
+        await _react(message, WORKING)
 
         async def work():
             handle = await document.get_file()
@@ -324,6 +349,7 @@ def make_document_handler(
             )
 
         result = await _run_with_typing(message, work())
+        await _react(message, REACTIONS[result.outcome])
         await message.reply_text(result.reply)
 
     return handle
@@ -350,6 +376,7 @@ def make_handler(
         message = update.effective_message
         if message is None:
             return
+        await _react(message, WORKING)
         result = await _run_with_typing(
             message,
             asyncio.to_thread(
@@ -362,6 +389,7 @@ def make_handler(
                 today=today,
             ),
         )
+        await _react(message, REACTIONS[result.outcome])
         await message.reply_text(result.reply)
 
     return handle
@@ -386,10 +414,14 @@ def make_ask_handler(settings: Settings, vault: Vault, *, run_ask=default_ask):
         if not question:
             await message.reply_text(ASK_USAGE)
             return
+        await _react(message, WORKING)
         reply = await _run_with_typing(
             message,
             asyncio.to_thread(run_ask, question, vault=vault, settings=settings),
         )
+        # The answer is its own feedback, so the mark comes off rather than
+        # claiming an outcome /ask does not have.
+        await _react(message, None)
         await message.reply_text(reply)
 
     return handle

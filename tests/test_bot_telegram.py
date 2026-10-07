@@ -15,10 +15,15 @@ def _summary():
 
 from second_brain.bot import (
     ASK_USAGE,
+    DUPLICATE,
+    FAILED,
     MAX_PDF_BYTES,
     NOT_A_PDF_MESSAGE,
     NO_URL_MESSAGE,
     TOO_BIG_MESSAGE,
+    REACTIONS,
+    SAVED,
+    WORKING,
     is_allowed,
     make_ask_handler,
     make_document_handler,
@@ -74,7 +79,11 @@ class FakeMessage:
         self.text = text
         self.document = document
         self.replies = []
+        self.reactions = []  # every set_reaction call, in order (None = cleared)
         self.chat = FakeChat()
+
+    async def set_reaction(self, emoji):
+        self.reactions.append(emoji)
 
     async def reply_text(self, text):
         self.replies.append(text)
@@ -266,3 +275,104 @@ class DocumentHandlerTest(unittest.TestCase):
 
         self.assertIn("no text layer", message.replies[0])
         self.assertEqual(list(self.vault.iter_notes()), [])
+
+
+class ReactionTest(unittest.TestCase):
+    """The dots are ephemeral and have been missed; a reaction stays on the
+    message, so the chat history says what became of every link."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.settings = _settings(self._tmp.name)
+        self.vault = Vault(Path(self._tmp.name))
+
+    def capture(self, text="https://example.com/post", user_id=42, **kw):
+        from second_brain.fetcher import Article
+
+        kw.setdefault("fetch", lambda url: Article("A Post", "body" + FILLER))
+        kw.setdefault("summarize", lambda *a, **k: _summary())
+        kw.setdefault("today", lambda: datetime.date(2026, 6, 30))
+        handler = make_handler(self.settings, self.vault, **kw)
+        update, message = _update(user_id, text)
+        asyncio.run(handler(update, None))
+        return message
+
+    def test_working_then_the_outcome(self):
+        message = self.capture()
+        self.assertEqual(message.reactions, [WORKING, REACTIONS[SAVED]])
+
+    def test_a_duplicate_ends_differently_from_a_failure(self):
+        self.capture()
+        self.assertEqual(self.capture().reactions[-1], REACTIONS[DUPLICATE])
+
+        from second_brain.fetcher import FetchError
+
+        def dead(url):
+            raise FetchError("dead link")
+
+        failed = self.capture("https://example.com/other", fetch=dead)
+        self.assertEqual(failed.reactions[-1], REACTIONS[FAILED])
+
+    def test_a_message_with_no_link_leaves_no_mark(self):
+        message = self.capture("hello there")
+        self.assertEqual(message.reactions, [WORKING, None])
+
+    def test_strangers_get_nothing(self):
+        message = self.capture(user_id=99)
+        self.assertEqual(message.reactions, [])
+
+    def test_a_refused_reaction_never_breaks_the_reply(self):
+        message_box = {}
+
+        async def refuses(emoji):
+            message_box.setdefault("tried", []).append(emoji)
+            raise RuntimeError("REACTION_INVALID")
+
+        from second_brain.fetcher import Article
+
+        handler = make_handler(
+            self.settings,
+            self.vault,
+            fetch=lambda url: Article("A Post", "body" + FILLER),
+            summarize=lambda *a, **k: _summary(),
+            today=lambda: datetime.date(2026, 6, 30),
+        )
+        update, message = _update(42, "https://example.com/post")
+        message.set_reaction = refuses
+
+        with self.assertLogs("second_brain.bot", level="WARNING") as logged:
+            asyncio.run(handler(update, None))
+
+        self.assertEqual(len(message.replies), 1)  # the note still lands
+        self.assertTrue(any("REACTION_INVALID" in line for line in logged.output))
+
+    def test_ask_marks_and_then_clears(self):
+        handler = make_ask_handler(self.settings, self.vault, run_ask=lambda *a, **k: "an answer")
+        update, message = _update(42, "/ask what did I save?")
+        asyncio.run(handler(update, None))
+
+        self.assertEqual(message.reactions, [WORKING, None])
+        self.assertEqual(message.replies, ["an answer"])
+
+    def test_an_uploaded_pdf_is_marked_too(self):
+        from second_brain.fetcher import Article
+
+        handler = make_document_handler(
+            self.settings,
+            self.vault,
+            extract=lambda data, name: Article("A Paper", "text" + FILLER, source="pdf"),
+            summarize=lambda *a, **k: _summary(),
+            today=lambda: datetime.date(2026, 6, 30),
+        )
+        update, message = _update(42, None, document=FakeDocument())
+        asyncio.run(handler(update, None))
+
+        self.assertEqual(message.reactions, [WORKING, REACTIONS[SAVED]])
+
+    def test_a_file_refused_before_the_download_is_not_marked_as_working(self):
+        handler = make_document_handler(self.settings, self.vault)
+        update, message = _update(42, None, document=FakeDocument(name="x.docx", mime="text/plain"))
+        asyncio.run(handler(update, None))
+
+        self.assertEqual(message.reactions, [])  # nothing started, nothing to mark
