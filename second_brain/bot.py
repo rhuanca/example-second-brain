@@ -74,7 +74,26 @@ def handle_url(
     except FetchError as exc:
         return PipelineResult(f"⚠️ Couldn't read that article: {exc}")
 
-    # Every route came back with scraps. Summarizing those produces a confident
+    return _capture(
+        article, url, vault=vault, settings=settings, summarize=summarize, today=today
+    )
+
+
+def _capture(
+    article,
+    source: str,
+    *,
+    vault: Vault,
+    settings: Settings,
+    summarize,
+    today,
+) -> PipelineResult:
+    """Summarize an article and file it. Everything after "we have the text".
+
+    Shared by the two ways text arrives -- a link and an uploaded file -- which
+    differ only in how they got it and what identifies the source.
+    """
+    # The source came back with scraps. Summarizing those produces a confident
     # note about a consent wall or a tracking pixel, which is worse than nothing:
     # it looks like a real note in the vault forever.
     if is_thin(article.text):
@@ -96,7 +115,7 @@ def handle_url(
     try:
         path = vault.write_note(
             summary,
-            url,
+            source,
             today(),
             archive=article.text,
             kind=article.kind,
