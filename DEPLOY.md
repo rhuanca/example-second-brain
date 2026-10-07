@@ -53,6 +53,10 @@ journalctl  --user -u    rr-second-brain-kb -f          # live logs
 
 ## Back up
 
+Run `./backup.sh install` once, then it is a daily timer — see
+**[BACKUP.md](BACKUP.md)** for what is kept, how to restore, and the quarterly
+drill. The short version of what matters:
+
 Two things are yours and not rebuildable: the **vault** — which now holds the
 original PDFs beside their text, so it grows in megabytes rather than kilobytes
 — and the knowledge base's **`KB_STATE_DB`** (stars, archive flags, read counts, saved chats; default

@@ -236,7 +236,8 @@ uv run python -m second_brain.kb.main                 # http://127.0.0.1:8765
 - New captures are picked up automatically (the index updates only what changed).
 
 Deploying it, and reaching it from outside through Cloudflare Tunnel + Access, is
-in [DEPLOY.md](DEPLOY.md).
+in [DEPLOY.md](DEPLOY.md). Backups — daily snapshots of the vault and the state
+database, and how to restore one — are in [BACKUP.md](BACKUP.md).
 
 ## Architecture
 
