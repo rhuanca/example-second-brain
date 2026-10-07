@@ -27,7 +27,7 @@ from typing import Callable
 import numpy as np
 
 from second_brain.kb.embeddings import Embedder, EmbeddingIndex, RefreshStats, refresh
-from second_brain.kb.notes import Card, archive_path, load_cards
+from second_brain.kb.notes import Card, archive_path, load_cards, original_path
 from second_brain.kb.state import NoteState, ReadStats
 from second_brain.kb.topics import Taxonomy, Topic, load_taxonomy
 from second_brain.kb.visuals import Point, map_layout
@@ -162,6 +162,20 @@ class Library:
             return path.read_text(encoding="utf-8")
         except OSError:
             return None
+
+    def original(self, note_id: object) -> Path | None:
+        """The stored source file for a known note, or None.
+
+        Same rule as `archive_text`: the path is built from the enumerated id, and
+        anything resolving outside the vault is refused.
+        """
+        card = self.card(note_id)
+        if card is None:
+            return None
+        path = original_path(self.vault, card.note_id)
+        if not path.is_file() or not self._contained(path):
+            return None
+        return path
 
     def _contained(self, path: Path) -> bool:
         """False for anything that resolves outside the vault (e.g. a symlink)."""

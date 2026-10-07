@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from second_brain.ask import Note, load_notes
-from second_brain.vault import SOURCES_DIR, Vault
+from second_brain.vault import ORIGINAL_SUFFIX, SOURCES_DIR, Vault
 
 TLDR = "TL;DR"
 KEY_POINTS = "Key technical points"
@@ -53,6 +53,11 @@ def load_cards(vault: Vault) -> list[Card]:
 def archive_path(vault: Vault, note_id: str) -> Path:
     """Where the full-text archive for `note_id` lives (may not exist)."""
     return vault.root / SOURCES_DIR / f"{note_id}.source.md"
+
+
+def original_path(vault: Vault, note_id: str) -> Path:
+    """Where the stored source file (a PDF) for `note_id` lives (may not exist)."""
+    return vault.root / SOURCES_DIR / f"{note_id}{ORIGINAL_SUFFIX}"
 
 
 def _to_card(note: Note) -> Card:

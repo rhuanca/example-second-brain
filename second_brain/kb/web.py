@@ -18,7 +18,13 @@ from urllib.parse import parse_qs, quote, urlencode
 
 import frontmatter
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    StreamingResponse,
+)
 from fastapi.templating import Jinja2Templates
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -572,6 +578,7 @@ def build_router(
             "note.html",
             note=_view(card, library, topic_slots(library.topics())),
             has_source=library.archive_text(card.note_id) is not None,
+            original=_file_size(library.original(card.note_id)),
             archived=library.is_archived(card.note_id),
             reads=reads,
         )
@@ -604,6 +611,26 @@ def build_router(
             return not_found(request)
         back = "/archive" if form.get("back") == ["archive"] else f"/notes/{quote(card.note_id)}"
         return RedirectResponse(back, status_code=303)
+
+    @router.get("/notes/{note_id}/file")
+    def original_file(request: Request, note_id: str):
+        """The stored source file (a PDF), as a download.
+
+        An attachment rather than an inline viewer, so the page CSP -- which
+        allows no object or frame -- stays as strict as it is.
+        """
+        library.refresh_if_stale()
+        path = library.original(note_id)
+        if path is None:
+            return not_found(request)
+        library.record_read(note_id, "web")
+        # `nosniff` comes from SecurityHeadersMiddleware, like every other page.
+        return FileResponse(
+            path,
+            media_type="application/pdf",
+            filename=path.name,
+            content_disposition_type="attachment",
+        )
 
     @router.get("/notes/{note_id}/source", response_class=HTMLResponse)
     def source(request: Request, note_id: str):
@@ -773,6 +800,14 @@ def _same_origin(request: Request) -> bool:
     origin = request.headers.get("origin")
     host = request.headers.get("host", "")
     return origin in {f"https://{host}", f"http://{host}"}
+
+
+def _file_size(path) -> str:
+    """A human size for the stored file, or "" when there isn't one."""
+    if path is None:
+        return ""
+    size = path.stat().st_size
+    return f"{size / 1024 / 1024:.1f} MB" if size >= 1024 * 1024 else f"{max(size // 1024, 1)} KB"
 
 
 def _reads_line(stats) -> str:

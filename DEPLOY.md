@@ -52,8 +52,9 @@ journalctl  --user -u    rr-second-brain-kb -f          # live logs
 
 ## Back up
 
-Two things are yours and not rebuildable: the **vault**, and the knowledge
-base's **`KB_STATE_DB`** (stars, archive flags, read counts, saved chats; default
+Two things are yours and not rebuildable: the **vault** — which now holds the
+original PDFs beside their text, so it grows in megabytes rather than kilobytes
+— and the knowledge base's **`KB_STATE_DB`** (stars, archive flags, read counts, saved chats; default
 `~/.local/share/second-brain/kb-state.db`). Copy it with
 `sqlite3 "$DB" ".backup kb-state.backup.db"` (safe while the service runs), or
 stop the service and copy the file. `KB_INDEX_DIR` is derived: delete it and

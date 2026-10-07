@@ -71,6 +71,10 @@ You'll get a summary reply, and a note will appear under
   saved. The same file sent twice is caught by its content hash, however it was
   renamed, and it needs the `pdf` extra (`./deploy.sh` installs it). A **link**
   to a PDF works too and is tagged the same way.
+  **The file itself is kept** at `sources/<note>.pdf` and linked from the note,
+  because the diagrams only exist in the original: open it in Obsidian, or
+  download it from the note page. Linked PDFs are downloaded alongside their
+  text (up to 25MB); losing that download costs the file, never the capture.
 - **Medium links** work out of the box for free posts. For **member-only**
   articles, set `MEDIUM_COOKIE` (see below) so the bot fetches the full text you
   pay for; without it, member-only links only yield the public teaser.
@@ -381,7 +385,7 @@ flowchart LR
 | `main.py` → `rr-second-brain-telegram` | Capture. The only writer. |
 | `slack_main.py` → `rr-second-brain-slack` | Ask-only. A link here gets a nudge to use Telegram. |
 | `kb/main.py` → `rr-second-brain-kb` | MCP + browse UI on `127.0.0.1:8765`. Reads the vault; its only write there is moving a deleted note into `.trash/`. |
-| Obsidian vault | Source of truth. Flat `*.md` + `sources/*.source.md` archives, with deleted notes parked in `.trash/`. |
+| Obsidian vault | Source of truth. Flat `*.md` + `sources/*.source.md` archives (plus `sources/*.pdf` originals), with deleted notes parked in `.trash/`. |
 | `second_brain/kb/topics.json` | The taxonomy, versioned in git so drift is visible. |
 | `KB_INDEX_DIR` | Embedding vectors + manifest + the downloaded model. Derived, rebuildable, outside the vault. |
 | `KB_STATE_DB` | SQLite: stars, archive flags, read counts, saved chats. Your data, **not** rebuildable: back it up with the vault. |

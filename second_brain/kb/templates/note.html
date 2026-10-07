@@ -48,6 +48,7 @@
     <span class="source-link">Source: {{ note.source_label }}</span>
     {% endif %}
     {% if has_source %}<a href="/notes/{{ note.id | urlencode }}/source">Full captured text</a>{% endif %}
+    {% if original %}<a href="/notes/{{ note.id | urlencode }}/file">Original PDF ({{ original }})</a>{% endif %}
   </div>
 </article>
 {% endblock %}

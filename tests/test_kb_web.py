@@ -480,6 +480,43 @@ class SavedChatsTest(_Client):
                 self.assertEqual(self.post(path, {"title": "x"}).status_code, 404)
 
 
+class OriginalFileTest(_Client):
+    """A paper's diagrams live in the file, so the note offers it for download."""
+
+    def store_pdf(self, note_id="memory", data=b"%PDF-1.4 with a diagram"):
+        folder = self.root / "sources"
+        folder.mkdir(exist_ok=True)
+        (folder / f"{note_id}.pdf").write_bytes(data)
+        self._client.app.state.library.refresh_if_stale(force=True)
+
+    def test_the_file_is_served_as_a_download(self):
+        self.store_pdf()
+        response = self._client.get("/notes/memory/file")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"], "application/pdf")
+        self.assertIn("attachment", response.headers["content-disposition"])
+        self.assertEqual(response.headers["x-content-type-options"], "nosniff")
+        self.assertEqual(response.content, b"%PDF-1.4 with a diagram")
+
+    def test_the_note_links_it_with_its_size(self):
+        self.store_pdf(data=b"%PDF" + b"x" * (2 * 1024 * 1024))
+        page = self.get("/notes/memory")
+        self.assertIn('href="/notes/memory/file"', page)
+        self.assertIn("Original PDF (2.0 MB)", page)
+
+    def test_a_note_without_one_offers_nothing(self):
+        page = self.get("/notes/memory")
+        self.assertNotIn("/notes/memory/file", page)
+        self.assertEqual(self._client.get("/notes/memory/file").status_code, 404)
+
+    def test_unknown_and_crafted_ids_are_404(self):
+        self.store_pdf()
+        for note_id in ["nope", "..%2Fsecret", "memory.md"]:
+            with self.subTest(note_id=note_id):
+                self.assertEqual(self._client.get(f"/notes/{note_id}/file").status_code, 404)
+
+
 class DeleteTest(_Client):
     def test_a_get_never_deletes_it_only_asks(self):
         page = self.get("/notes/memory/delete")
