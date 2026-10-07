@@ -29,6 +29,20 @@ class _Response:
         self.stop_reason = stop_reason
 
 
+class _Stream:
+    def __init__(self, response):
+        self._response = response
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def get_final_message(self):
+        return self._response
+
+
 class _Client:
     """Records the call it was given and replays a canned reply."""
 
@@ -42,10 +56,12 @@ class _Client:
     def prompts(self):
         return [c["messages"][0]["content"] for c in self.calls]
 
-    def create(self, **kwargs):
+    def stream(self, **kwargs):
+        """Discovery streams: the output budget grows with the library, and the
+        SDK refuses a non-streaming request that may run over ten minutes."""
         self.calls.append(kwargs)
         text = self.payload if isinstance(self.payload, str) else json.dumps(self.payload)
-        return _Response(text, self.stop_reason)
+        return _Stream(_Response(text, self.stop_reason))
 
 
 def _cards(n=4):
@@ -271,6 +287,27 @@ class PersistenceTest(unittest.TestCase):
     def test_corrupt_file_returns_none_rather_than_raising(self):
         self.path.write_text("{ not json", encoding="utf-8")
         self.assertIsNone(load_taxonomy(self.path))
+
+
+class StreamingTest(unittest.TestCase):
+    """A 161-note vault asks for 32k output tokens, and the SDK refuses a
+    non-streaming request that may run past ten minutes."""
+
+    def test_discovery_streams_and_never_calls_create(self):
+        client = _Client(
+            _payload([{"id": "a", "name": "A", "description": "", "note_ids": ["n0", "n1"]}])
+        )
+        client.create = lambda **kw: self.fail("discovery must stream, not create")
+
+        discover(_cards(2), model="claude-opus-5", client=client)
+
+        self.assertEqual(len(client.calls), 1)
+
+    def test_the_budget_grows_with_the_library(self):
+        from second_brain.kb.topics import _budget
+
+        self.assertGreater(_budget(161), _budget(75))
+        self.assertEqual(_budget(161), 161 * 200)
 
 
 if __name__ == "__main__":

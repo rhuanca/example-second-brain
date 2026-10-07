@@ -165,13 +165,19 @@ def discover(
         menu="\n".join(card.summary_line() for card in cards),
         refinement=_REFINEMENT.format(existing=_render_existing(existing)) if existing else "",
     )
-    response = client.messages.create(
+    # Streamed, not awaited in one piece: the budget grows with the library (a
+    # 161-note vault asks for 32k output tokens), and past roughly ten minutes of
+    # expected work the SDK refuses a non-streaming request outright. Nothing is
+    # rendered as it arrives -- the whole taxonomy is needed before it can be
+    # parsed -- so this is only about staying under that ceiling.
+    with client.messages.stream(
         model=model,
         max_tokens=max_tokens or _budget(len(cards)),
         system=_SYSTEM,
         messages=[{"role": "user", "content": prompt}],
         output_config={"format": {"type": "json_schema", "schema": _SCHEMA}},
-    )
+    ) as stream:
+        response = stream.get_final_message()
 
     stop = getattr(response, "stop_reason", None)
     raw = _extract_text(response)
