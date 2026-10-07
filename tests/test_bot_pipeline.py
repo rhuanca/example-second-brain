@@ -7,7 +7,7 @@ from second_brain.config import Settings
 from second_brain.fetcher import Article, FetchError
 from second_brain.models import Summary
 from second_brain.summarizer import SummarizerError
-from second_brain.bot import NO_URL_MESSAGE, handle_url
+from second_brain.bot import NO_URL_MESSAGE, handle_document, handle_url
 from second_brain.vault import Vault
 
 DATE = datetime.date(2026, 6, 30)
@@ -208,3 +208,75 @@ class HandleUrlTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HandleDocumentTest(unittest.TestCase):
+    """Uploads take the same path as links from "we have the text" onward."""
+
+    PDF = b"%PDF-1.4 pretend bytes"
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.vault = Vault(Path(self._tmp.name))
+        self.settings = _settings(self._tmp.name)
+
+    def _run(self, data=None, filename="paper.pdf", **kw):
+        kw.setdefault(
+            "extract",
+            lambda data, name: Article("A Paper", "the paper text" + FILLER, source="pdf", kind="pdf"),
+        )
+        kw.setdefault("summarize", lambda *a, **k: _summary())
+        kw.setdefault("today", lambda: DATE)
+        return handle_document(
+            self.PDF if data is None else data,
+            filename,
+            vault=self.vault,
+            settings=self.settings,
+            **kw,
+        )
+
+    def test_a_pdf_is_filed_with_its_hash_as_the_source(self):
+        import hashlib
+
+        result = self._run()
+
+        self.assertTrue(result.ok)
+        note = result.note_path.read_text()
+        self.assertIn(f"source: file:sha256-{hashlib.sha256(self.PDF).hexdigest()}", note)
+        self.assertIn("#pdf", result.reply)
+
+    def test_the_text_is_archived_beside_the_note(self):
+        result = self._run()
+        archive = self.vault.root / "sources" / f"{result.note_path.stem}.source.md"
+        self.assertIn("the paper text", archive.read_text())
+        self.assertIn("kind: pdf", archive.read_text())
+
+    def test_the_same_file_twice_is_a_duplicate_whatever_it_is_called(self):
+        self._run(filename="paper.pdf")
+        again = self._run(filename="renamed-copy.pdf")
+
+        self.assertFalse(again.ok)
+        self.assertIn("Already in your second brain", again.reply)
+        self.assertEqual(len(list(self.vault.iter_notes())), 1)
+
+    def test_a_different_file_is_not_a_duplicate(self):
+        self._run()
+        other = self._run(data=b"%PDF-1.4 different bytes")
+        self.assertTrue(other.ok)
+        self.assertEqual(len(list(self.vault.iter_notes())), 2)
+
+    def test_a_pdf_that_cannot_be_read_saves_nothing(self):
+        def no_text(data, name):
+            raise FetchError("That PDF has no text layer — it looks like a scan.")
+
+        result = self._run(extract=no_text)
+
+        self.assertIn("no text layer", result.reply)
+        self.assertIsNone(result.note_path)
+        self.assertEqual(list(self.vault.iter_notes()), [])
+
+    def test_scraps_are_refused_as_they_are_for_links(self):
+        result = self._run(extract=lambda data, name: Article("x", "two words", source="pdf"))
+        self.assertIn("almost no text", result.reply)
+        self.assertEqual(list(self.vault.iter_notes()), [])

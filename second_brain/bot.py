@@ -11,6 +11,7 @@ import asyncio
 import contextlib
 import datetime as _dt
 import functools
+import hashlib
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +19,7 @@ from pathlib import Path
 from second_brain.ask import ask as default_ask
 from second_brain.config import Settings
 from second_brain.fetcher import FetchError, is_thin
+from second_brain.pdf import extract_pdf as default_extract
 from second_brain.sources import fetch as default_fetch
 from second_brain.summarizer import SummarizerError
 from second_brain.summarizer import summarize as default_summarize
@@ -25,6 +27,16 @@ from second_brain.urls import extract_url
 from second_brain.vault import DuplicateNoteError, Vault
 
 logger = logging.getLogger(__name__)
+
+# The Bot API will not hand a bot a file larger than this, so say so rather than
+# failing somewhere inside the download.
+MAX_PDF_BYTES = 20 * 1024 * 1024
+PDF_MIME = "application/pdf"
+NOT_A_PDF_MESSAGE = "📄 I can only read PDFs for now — send me a PDF or a link."
+TOO_BIG_MESSAGE = (
+    f"📄 That file is over {MAX_PDF_BYTES // (1024 * 1024)}MB, which is more than "
+    "Telegram will hand me. Send a link to it instead."
+)
 
 TOO_THIN_MESSAGE = (
     "⚠️ That page gave back almost no text, so there's nothing worth "
@@ -76,6 +88,38 @@ def handle_url(
 
     return _capture(
         article, url, vault=vault, settings=settings, summarize=summarize, today=today
+    )
+
+
+def handle_document(
+    data: bytes,
+    filename: str,
+    *,
+    vault: Vault,
+    settings: Settings,
+    extract=default_extract,
+    summarize=default_summarize,
+    today=None,
+) -> PipelineResult:
+    """Run capture → summarize → save for an uploaded file.
+
+    The file's identity is the hash of its bytes, so the same PDF sent twice is a
+    duplicate however it was named -- the counterpart of a URL for a link.
+    """
+    today = today or _dt.date.today
+    source = f"file:sha256-{hashlib.sha256(data).hexdigest()}"
+
+    existing = vault.find_by_url(source)
+    if existing is not None:
+        return PipelineResult(f"📌 Already in your second brain: {existing.name}")
+
+    try:
+        article = extract(data, filename)
+    except FetchError as exc:
+        return PipelineResult(f"⚠️ Couldn't read that file: {exc}")
+
+    return _capture(
+        article, source, vault=vault, settings=settings, summarize=summarize, today=today
     )
 
 
@@ -221,7 +265,54 @@ def build_application(settings: Settings, vault: Vault):
             make_handler(settings, vault, fetch=fetch),
         )
     )
+    # Every document, not just PDFs: an unanswered upload looks like a dead bot.
+    app.add_handler(MessageHandler(filters.Document.ALL, make_document_handler(settings, vault)))
     return app
+
+
+def make_document_handler(
+    settings: Settings,
+    vault: Vault,
+    *,
+    extract=default_extract,
+    summarize=default_summarize,
+    today=None,
+):
+    """Create the async handler for uploaded files (PDFs today)."""
+
+    async def handle(update, context):
+        user = update.effective_user
+        if user is None or not is_allowed(user.id, settings):
+            return  # silently ignore anyone who isn't the owner
+        message = update.effective_message
+        document = getattr(message, "document", None) if message else None
+        if document is None:
+            return
+        if (getattr(document, "mime_type", "") or "") != PDF_MIME:
+            await message.reply_text(NOT_A_PDF_MESSAGE)
+            return
+        if (getattr(document, "file_size", 0) or 0) > MAX_PDF_BYTES:
+            await message.reply_text(TOO_BIG_MESSAGE)
+            return
+
+        async def work():
+            handle = await document.get_file()
+            data = bytes(await handle.download_as_bytearray())
+            return await asyncio.to_thread(
+                handle_document,
+                data,
+                getattr(document, "file_name", "") or "",
+                vault=vault,
+                settings=settings,
+                extract=extract,
+                summarize=summarize,
+                today=today,
+            )
+
+        result = await _run_with_typing(message, work())
+        await message.reply_text(result.reply)
+
+    return handle
 
 
 def make_handler(

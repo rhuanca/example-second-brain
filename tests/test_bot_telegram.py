@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import tempfile
 import unittest
 from pathlib import Path
@@ -6,13 +7,24 @@ from types import SimpleNamespace
 
 FILLER = " " + "enough words here to count as an article. " * 12
 
+
+def _summary():
+    from second_brain.models import Summary
+
+    return Summary(title="Agentic Patterns", tldr="How to build agent loops.", tags=["agentic-dev"])
+
 from second_brain.bot import (
     ASK_USAGE,
+    MAX_PDF_BYTES,
+    NOT_A_PDF_MESSAGE,
     NO_URL_MESSAGE,
+    TOO_BIG_MESSAGE,
     is_allowed,
     make_ask_handler,
+    make_document_handler,
     make_handler,
 )
+from second_brain.fetcher import Article
 from second_brain.config import Settings
 from second_brain.vault import Vault
 
@@ -36,9 +48,31 @@ class FakeChat:
         self.actions.append(action)
 
 
+class FakeFile:
+    def __init__(self, data):
+        self.data = data
+
+    async def download_as_bytearray(self):
+        return bytearray(self.data)
+
+
+class FakeDocument:
+    def __init__(self, data=b"%PDF-1.4", name="paper.pdf", mime="application/pdf", size=None):
+        self.data = data
+        self.file_name = name
+        self.mime_type = mime
+        self.file_size = len(data) if size is None else size
+        self.downloads = 0
+
+    async def get_file(self):
+        self.downloads += 1
+        return FakeFile(self.data)
+
+
 class FakeMessage:
-    def __init__(self, text):
+    def __init__(self, text, document=None):
         self.text = text
+        self.document = document
         self.replies = []
         self.chat = FakeChat()
 
@@ -46,8 +80,8 @@ class FakeMessage:
         self.replies.append(text)
 
 
-def _update(user_id, text):
-    message = FakeMessage(text)
+def _update(user_id, text, document=None):
+    message = FakeMessage(text, document=document)
     return SimpleNamespace(
         effective_user=SimpleNamespace(id=user_id) if user_id is not None else None,
         effective_message=message,
@@ -169,3 +203,66 @@ class AskHandlerTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DocumentHandlerTest(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.settings = _settings(self._tmp.name)
+        self.vault = Vault(Path(self._tmp.name))
+
+    def handler(self, **kwargs):
+        kwargs.setdefault(
+            "extract", lambda data, name: Article("A Paper", "the paper text" + FILLER, source="pdf", kind="pdf")
+        )
+        kwargs.setdefault("summarize", lambda *a, **k: _summary())
+        kwargs.setdefault("today", lambda: datetime.date(2026, 6, 30))
+        return make_document_handler(self.settings, self.vault, **kwargs)
+
+    def run_handler(self, document, user_id=42, **kwargs):
+        update, message = _update(user_id, None, document=document)
+        asyncio.run(self.handler(**kwargs)(update, None))
+        return message
+
+    def test_a_pdf_is_captured_with_typing_shown(self):
+        document = FakeDocument()
+        message = self.run_handler(document)
+
+        self.assertEqual(document.downloads, 1)
+        self.assertIn("typing", message.chat.actions)
+        self.assertIn("Agentic Patterns", message.replies[0])
+        self.assertEqual(len(list(self.vault.iter_notes())), 1)
+
+    def test_other_users_are_ignored_entirely(self):
+        document = FakeDocument()
+        message = self.run_handler(document, user_id=99)
+
+        self.assertEqual(message.replies, [])
+        self.assertEqual(document.downloads, 0)  # never even downloaded
+        self.assertEqual(list(self.vault.iter_notes()), [])
+
+    def test_anything_that_is_not_a_pdf_says_so_without_downloading(self):
+        document = FakeDocument(name="notes.docx", mime="application/vnd.openxmlformats")
+        message = self.run_handler(document)
+
+        self.assertEqual(message.replies, [NOT_A_PDF_MESSAGE])
+        self.assertEqual(document.downloads, 0)
+
+    def test_a_file_bigger_than_telegram_will_send_is_refused_early(self):
+        document = FakeDocument(size=MAX_PDF_BYTES + 1)
+        message = self.run_handler(document)
+
+        self.assertEqual(message.replies, [TOO_BIG_MESSAGE])
+        self.assertEqual(document.downloads, 0)
+
+    def test_a_scan_is_reported_and_nothing_is_saved(self):
+        from second_brain.fetcher import FetchError
+
+        def no_text(data, name):
+            raise FetchError("That PDF has no text layer — it looks like a scan.")
+
+        message = self.run_handler(FakeDocument(), extract=no_text)
+
+        self.assertIn("no text layer", message.replies[0])
+        self.assertEqual(list(self.vault.iter_notes()), [])
