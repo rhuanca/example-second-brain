@@ -71,8 +71,18 @@ def undo(
 
     from second_brain.kb import topics as topics_module
 
-    save_taxonomy(previous, Path(topics_path or topics_module.TOPICS_FILE))
-    changed = write_notes(previous.assignments()) if write_notes else []
+    path = Path(topics_path or topics_module.TOPICS_FILE)
+    restored = previous.assignments()
+    # Notes filed under a topic that is being rolled back are not in the restored
+    # taxonomy at all, so they would keep a `topics:` entry for a topic that no
+    # longer exists. They are explicitly cleared.
+    current = load_taxonomy(path)
+    stale = {
+        note_id: [] for note_id in (current.assignments() if current else {}) if note_id not in restored
+    }
+
+    save_taxonomy(previous, path)
+    changed = write_notes({**restored, **stale}) if write_notes else []
     newest.unlink(missing_ok=True)
     return (
         f"↩️ Restored {len(previous.topics)} topics from {newest.stem} "

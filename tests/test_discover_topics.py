@@ -142,3 +142,25 @@ class SplitApplyTest(unittest.TestCase):
         finally:
             discover_topics.load_taxonomy = original
         self.assertIn("Run discovery first", str(ctx.exception))
+
+
+class WriteTopicsTest(unittest.TestCase):
+    def test_an_empty_list_removes_the_key(self):
+        """A note the taxonomy no longer mentions has no topics at all, which is
+        not the same as `topics: []`."""
+        import tempfile
+        from pathlib import Path as _Path
+
+        import frontmatter
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _Path(tmp)
+            (root / "n1.md").write_text(
+                "---\ntitle: N\nsource: https://x\ntopics:\n- gone\n---\n\nbody\n",
+                encoding="utf-8",
+            )
+
+            changed = discover_topics.write_topics(root, {"n1": []})
+
+            self.assertEqual(len(changed), 1)
+            self.assertIsNone(frontmatter.load(str(root / "n1.md")).get("topics"))

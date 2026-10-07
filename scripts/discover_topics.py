@@ -51,16 +51,25 @@ from second_brain.vault import Vault
 
 
 def write_topics(vault_root: Path, assignments: dict[str, list[str]]) -> list[Path]:
-    """Set `topics:` on each assigned note. Returns the paths actually changed."""
+    """Set `topics:` on each assigned note. Returns the paths actually changed.
+
+    An empty list removes the key: a note the taxonomy no longer mentions has no
+    topics, and `topics: []` would be read back as a note nobody classified
+    differently from one classified as nothing.
+    """
     changed = []
     for note_id, topic_ids in sorted(assignments.items()):
         path = vault_root / f"{note_id}.md"
         if not path.exists():
             continue
         post = frontmatter.load(str(path))
-        if list(post.get("topics") or []) == topic_ids:
+        current = list(post.get("topics") or [])
+        if current == topic_ids:
             continue  # already correct; leave the file alone
-        post["topics"] = topic_ids
+        if topic_ids:
+            post["topics"] = topic_ids
+        else:
+            post.metadata.pop("topics", None)
         path.write_text(frontmatter.dumps(post) + "\n", encoding="utf-8")
         changed.append(path)
     return changed

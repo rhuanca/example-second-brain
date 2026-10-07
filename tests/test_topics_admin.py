@@ -69,6 +69,23 @@ class TopicsAdminTest(unittest.TestCase):
         self.assertIn("Restored 2 topics", message)
         self.assertIn("2 notes rewritten", message)
 
+    def test_notes_filed_by_the_refresh_are_unfiled_again(self):
+        """The bug a drill caught: a note added under a topic being rolled back
+        kept pointing at a topic that no longer exists."""
+        self.store(taxonomy(("a", "Agents", ["n1"])))
+        save_taxonomy(
+            taxonomy(("a", "Agents", ["n1"]), ("voice", "Voice", ["n2", "n3"])),
+            self.topics_file,
+        )
+
+        topics_admin.undo(
+            topics_path=self.topics_file,
+            history=self.history,
+            write_notes=lambda assignments: self.written.append(assignments) or [],
+        )
+
+        self.assertEqual(self.written[0], {"n1": ["a"], "n2": [], "n3": []})
+
     def test_a_snapshot_is_consumed_so_a_second_undo_goes_further_back(self):
         self.store(taxonomy(("a", "Oldest", ["n1"])), name="20260101T000000")
         self.store(taxonomy(("a", "Middle", ["n1"])), name="20260202T000000")
