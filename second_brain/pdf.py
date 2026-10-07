@@ -14,6 +14,11 @@ from pathlib import Path
 
 from second_brain.fetcher import Article, FetchError, is_thin
 
+# Big enough for a long paper with figures, small enough that one bad link cannot
+# drop a few hundred MB into a vault that syncs.
+MAX_FILE_BYTES = 25 * 1024 * 1024
+PDF_MAGIC = b"%PDF"
+
 MISSING_DEPENDENCY = (
     "Reading PDFs needs the pdf extra. Install it on the server with: "
     "uv sync --extra pdf"
@@ -70,6 +75,32 @@ def _title(meta_title: str | None, text: str, filename: str) -> str:
     if meta and not looks_like_a_filename(meta):
         return meta
     return title_from(text, stem or filename or "Untitled PDF")
+
+
+def download(url: str, *, get=None) -> bytes | None:
+    """The PDF behind a link, or None -- never an exception.
+
+    The reader hands back Markdown, not the file, so keeping the original needs
+    this one extra fetch. Losing it costs the diagrams, not the capture, so every
+    failure here is answered with None and the note is saved from the text as
+    usual. A response is only accepted when it really starts with %PDF: an error
+    page served with the wrong content type is the common case.
+    """
+    try:
+        resp = (get or _default_get)(url, timeout=60, stream=False)
+        status = getattr(resp, "status_code", 200)
+        data = bytes(getattr(resp, "content", b"") or b"")
+    except Exception:  # noqa: BLE001 -- the capture does not depend on this
+        return None
+    if status >= 400 or not data.startswith(PDF_MAGIC) or len(data) > MAX_FILE_BYTES:
+        return None
+    return data
+
+
+def _default_get(url: str, **kwargs):
+    import requests
+
+    return requests.get(url, **kwargs)
 
 
 def _default_reader(data: bytes) -> tuple[list[str], str | None]:

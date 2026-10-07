@@ -9,8 +9,9 @@ order of how much it can recover, falling through on failure:
   3. trafilatura       no key, no service; the floor
 
 A link that points at a PDF is still fetched this way -- the reader converts it
-to Markdown -- but it is labelled `pdf` so it carries the same tag and icon as a
-PDF sent to the bot.
+to Markdown -- but it is labelled `pdf`, carries the same tag and icon as a PDF
+sent to the bot, and the file itself is downloaded alongside so its diagrams are
+kept too.
 
 The session cookie is used only by route 1, which runs on this machine. It is a
 full Medium login, so it is never forwarded to Jina or any other service; what
@@ -33,6 +34,7 @@ from __future__ import annotations
 from urllib.parse import urlsplit
 
 from second_brain.fetcher import Article, FetchError, is_thin
+from second_brain.pdf import download as _pdf_download
 from second_brain.pdf import looks_like_a_filename, title_from
 from second_brain.fetcher import fetch as _article_fetch
 from second_brain.jina import fetch_jina as _jina_fetch
@@ -53,6 +55,7 @@ def fetch(
     youtube_fetch=_youtube_fetch,
     medium_fetch=_medium_fetch,
     jina_fetch=_jina_fetch,
+    pdf_download=_pdf_download,
 ) -> Article:
     """Return an Article (canonical Markdown) for `url`, routing by source.
 
@@ -75,11 +78,11 @@ def fetch(
         except FetchError:
             continue  # the next route may still reach it
         if not is_thin(article.text):
-            return _label(article, url)
-    return _label(routes[-1](), url)
+            return _label(article, url, pdf_download)
+    return _label(routes[-1](), url, pdf_download)
 
 
-def _label(article: Article, url: str) -> Article:
+def _label(article: Article, url: str, pdf_download) -> Article:
     """Mark a linked PDF as one, and name it after its contents.
 
     A reader hands back `1706.03762v7.pdf` as the title of a paper called
@@ -95,4 +98,7 @@ def _label(article: Article, url: str) -> Article:
     article.kind = "pdf"
     if not article.title or named_like_a_file or article.title == url:
         article.title = title_from(article.text, article.title)
+    # The file itself, for the diagrams the text layer leaves behind. Optional by
+    # design: None here means the note is saved without it.
+    article.original = pdf_download(url)
     return article

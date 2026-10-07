@@ -1,10 +1,13 @@
 import importlib.util
 import unittest
+from types import SimpleNamespace
 
 from second_brain.fetcher import FetchError
 from second_brain.pdf import (
+    MAX_FILE_BYTES,
     MISSING_DEPENDENCY,
     NO_TEXT_LAYER,
+    download,
     extract_pdf,
     looks_like_a_filename,
     title_from,
@@ -103,3 +106,29 @@ class RealLibraryTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DownloadTest(unittest.TestCase):
+    """Keeping the original is best-effort: it must never cost the capture."""
+
+    def get(self, content, status=200):
+        return lambda url, **kwargs: SimpleNamespace(status_code=status, content=content)
+
+    def test_a_real_pdf_comes_back(self):
+        self.assertEqual(download("https://x/p.pdf", get=self.get(b"%PDF-1.4 body")), b"%PDF-1.4 body")
+
+    def test_an_error_page_served_as_a_pdf_is_refused(self):
+        self.assertIsNone(download("https://x/p.pdf", get=self.get(b"<!DOCTYPE html><html>")))
+
+    def test_an_http_error_is_refused(self):
+        self.assertIsNone(download("https://x/p.pdf", get=self.get(b"%PDF-1.4", status=404)))
+
+    def test_oversize_is_refused(self):
+        big = b"%PDF-1.4" + b"x" * MAX_FILE_BYTES
+        self.assertIsNone(download("https://x/p.pdf", get=self.get(big)))
+
+    def test_a_network_error_returns_none_rather_than_raising(self):
+        def boom(url, **kwargs):
+            raise ConnectionError("down")
+
+        self.assertIsNone(download("https://x/p.pdf", get=boom))

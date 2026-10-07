@@ -229,11 +229,19 @@ class LinkedPdfTest(unittest.TestCase):
 
     PAPER = "# Attention Is All You Need\n\n" + "The dominant sequence models are. " * 20
 
-    def fetch_pdf(self, title, text=None, url="https://arxiv.org/pdf/1706.03762.pdf"):
+    def fetch_pdf(self, title, text=None, url="https://arxiv.org/pdf/1706.03762.pdf",
+                  pdf_download=None):
+        self.downloaded = []
+
+        def download(u):
+            self.downloaded.append(u)
+            return b"%PDF-1.4 bytes" if pdf_download is None else pdf_download(u)
+
         return fetch(
             url,
             jina_api_key="K",
             jina_fetch=lambda u, api_key=None: Article(title, text or self.PAPER),
+            pdf_download=download,
         )
 
     def test_a_pdf_link_is_tagged_as_a_pdf(self):
@@ -257,10 +265,23 @@ class LinkedPdfTest(unittest.TestCase):
         article = self.fetch_pdf("x.pdf", url="https://example.com/paper.pdf?download=1")
         self.assertEqual(article.source, "pdf")
 
-    def test_an_ordinary_page_is_untouched(self):
+    def test_an_ordinary_page_is_untouched_and_never_downloaded(self):
         article = self.fetch_pdf("A Blog Post", url="https://example.com/post")
         self.assertEqual((article.source, article.kind, article.title),
                          ("article", "article", "A Blog Post"))
+        self.assertIsNone(article.original)
+        self.assertEqual(self.downloaded, [])  # no second request for a web page
+
+    def test_the_file_itself_is_kept_for_its_diagrams(self):
+        article = self.fetch_pdf("1706.03762v7.pdf")
+        self.assertEqual(article.original, b"%PDF-1.4 bytes")
+        self.assertEqual(self.downloaded, ["https://arxiv.org/pdf/1706.03762.pdf"])
+
+    def test_a_failed_download_costs_the_file_not_the_capture(self):
+        article = self.fetch_pdf("1706.03762v7.pdf", pdf_download=lambda url: None)
+        self.assertIsNone(article.original)
+        self.assertEqual(article.title, "Attention Is All You Need")
+        self.assertIn("dominant sequence models", article.text)
 
 
 if __name__ == "__main__":
