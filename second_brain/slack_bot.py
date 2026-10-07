@@ -20,7 +20,11 @@ CAPTURE_HINT = (
     "Here, ask me about what you've saved, e.g. "
     "\"what have I saved about agent memory?\""
 )
-_WORKING_EMOJI = "hourglass_flowing_sand"
+# The same vocabulary the Telegram bot reacts with (👀 while working, 😢 when it
+# could not answer), in Slack's emoji names. Slack reactions accumulate rather
+# than replace, so the working one is removed before the outcome goes on.
+WORKING_EMOJI = "eyes"
+FAILED_EMOJI = "cry"
 
 
 def is_allowed(user_id, settings: Settings) -> bool:
@@ -40,7 +44,9 @@ def process_message(
 ) -> None:
     """Handle one Slack message event (pure of the Slack SDK, for testability).
 
-    `say(text)` posts a reply; `react()`/`unreact()` toggle the working indicator.
+    `say(text)` posts a reply. `react(emoji)` and `unreact(emoji)` mark the
+    message: 👀 while the answer is being written, and 😢 left behind if it could
+    not be written at all.
     """
     if not _is_owner_dm(event, settings):
         return
@@ -52,12 +58,16 @@ def process_message(
         return
 
     if react:
-        react()
+        react(WORKING_EMOJI)
     try:
         reply = run_ask(text, vault=vault, settings=settings)
+    except Exception:
+        if react:
+            react(FAILED_EMOJI)
+        raise
     finally:
         if unreact:
-            unreact()
+            unreact(WORKING_EMOJI)
     say(reply)
 
 
@@ -84,16 +94,16 @@ def build_app(settings: Settings, vault: Vault, *, run_ask=default_ask):
             vault=vault,
             say=say,
             run_ask=run_ask,
-            react=lambda: _safe_reaction(client.reactions_add, channel, ts),
-            unreact=lambda: _safe_reaction(client.reactions_remove, channel, ts),
+            react=lambda emoji: _safe_reaction(client.reactions_add, channel, ts, emoji),
+            unreact=lambda emoji: _safe_reaction(client.reactions_remove, channel, ts, emoji),
         )
 
     return app
 
 
-def _safe_reaction(fn, channel, ts) -> None:  # pragma: no cover — best-effort I/O
+def _safe_reaction(fn, channel, ts, emoji) -> None:  # pragma: no cover — best-effort I/O
     try:
-        fn(channel=channel, timestamp=ts, name=_WORKING_EMOJI)
+        fn(channel=channel, timestamp=ts, name=emoji)
     except Exception:  # noqa: BLE001 — feedback is cosmetic, never fail the reply
         pass
 

@@ -44,8 +44,8 @@ class SlackProcessTest(unittest.TestCase):
             settings=self.settings,
             vault=self.vault,
             say=self.said.append,
-            react=lambda: self.flags.append("react"),
-            unreact=lambda: self.flags.append("unreact"),
+            react=lambda emoji: self.flags.append(f"+{emoji}"),
+            unreact=lambda emoji: self.flags.append(f"-{emoji}"),
             **kw,
         )
 
@@ -57,7 +57,17 @@ class SlackProcessTest(unittest.TestCase):
     def test_owner_question_is_answered_with_feedback(self):
         self._run(_dm("what about agent memory?"))
         self.assertEqual(self.said, ["answer to: what about agent memory?"])
-        self.assertEqual(self.flags, ["react", "unreact"])
+        self.assertEqual(self.flags, ["+eyes", "-eyes"])
+
+    def test_an_answer_that_blows_up_leaves_a_mark(self):
+        """Otherwise a crashed ask looks identical to one still thinking."""
+        def boom(*a, **k):
+            raise RuntimeError("the brain fell over")
+
+        with self.assertRaises(RuntimeError):
+            self._run(_dm("what did I save?"), run_ask=boom)
+
+        self.assertEqual(self.flags, ["+eyes", "+cry", "-eyes"])
 
     def test_url_gets_capture_hint_not_ask(self):
         called = []
