@@ -57,6 +57,12 @@ You'll get a summary reply, and a note will appear under
   searches your saved notes and answers with Claude, citing the notes it used
   (see "Ask your second brain" below).
 - Sending a non-link message → a short usage hint, no note.
+- **The bot reacts to your message** so you can see where it got to: 👀 picked it
+  up, 💯 saved, 🤔 already in your second brain, 😢 couldn't read it. The mark
+  stays in the chat history, so the chat itself records what became of every
+  link. (It also shows "typing…" while it works, but that expires after a few
+  seconds and some clients don't show it — the reaction is the reliable one.
+  `scripts/check_telegram.py --send` reports whether Telegram accepts both.)
 - **Web articles**: with `JINA_API_KEY` set, pages are fetched via Jina Reader as
   Markdown **with vision-model image captions**, so diagrams/screenshots are
   summarized too. Without a key it falls back to local trafilatura (text only).

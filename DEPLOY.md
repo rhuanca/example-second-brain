@@ -45,6 +45,7 @@ Idempotent — re-run any time. It:
 ## Manage
 
 ```bash
+uv run python scripts/check_telegram.py --send           # is the bot's feedback getting through?
 systemctl --user status 'rr-second-brain*'               # all at once
 systemctl --user restart rr-second-brain-kb             # one service
 journalctl  --user -u    rr-second-brain-kb -f          # live logs
