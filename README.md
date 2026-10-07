@@ -233,6 +233,13 @@ uv run python -m second_brain.kb.main                 # http://127.0.0.1:8765
   stay read-only.
 - **Topics** come from `scripts/discover_topics.py` (see "Knowledge" below); until
   it has run, everything still works and notes show as "not in any topic".
+- **Topics keep themselves current.** `scripts/refresh_topics.py --install-timer`
+  runs discovery every three days, skipping any run with fewer than five unfiled
+  notes, and applies the result — so new captures stop piling up as grey on the
+  map. Surviving topics keep their position, so the map's colours do not move.
+  It refuses a taxonomy that fails the health check, snapshots the one it
+  replaces, and messages you what changed; `/topics` in Telegram shows the
+  current filing and `/topics undo` puts the previous one back.
 - New captures are picked up automatically (the index updates only what changed).
 
 Deploying it, and reaching it from outside through Cloudflare Tunnel + Access, is
