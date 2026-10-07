@@ -66,6 +66,11 @@ You'll get a summary reply, and a note will appear under
   that hits the local library from cloud/VPS hosts (and can even AI-generate a
   transcript for caption-less videos). If no transcript can be produced, the bot
   says so and saves nothing.
+- **PDFs**: send one to the bot as a file and it's read, summarized and filed
+  like any link — the text layer only, so a scanned PDF is reported rather than
+  saved. The same file sent twice is caught by its content hash, however it was
+  renamed, and it needs the `pdf` extra (`./deploy.sh` installs it). A **link**
+  to a PDF works too and is tagged the same way.
 - **Medium links** work out of the box for free posts. For **member-only**
   articles, set `MEDIUM_COOKIE` (see below) so the bot fetches the full text you
   pay for; without it, member-only links only yield the public teaser.
