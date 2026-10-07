@@ -31,6 +31,11 @@ SOURCES_DIR = "sources"
 # matters while the file is still there.
 TRASH_DIR = ".trash"
 
+# The original file a note was made from, when there was one: `<stem>.pdf` beside
+# `<stem>.source.md`. The extracted text is what the library reads, but a paper's
+# diagrams only exist in the file itself.
+ORIGINAL_SUFFIX = ".pdf"
+
 
 def slugify(title: str) -> str:
     """Turn a title into a filesystem-safe, lowercase-kebab slug."""
@@ -46,7 +51,12 @@ def note_filename(title: str, date: _dt.date) -> str:
 
 
 def render_note(
-    summary: Summary, source_url: str, date: _dt.date, *, archive_link: str | None = None
+    summary: Summary,
+    source_url: str,
+    date: _dt.date,
+    *,
+    archive_link: str | None = None,
+    original_link: str | None = None,
 ) -> str:
     """Render a Summary into Markdown with YAML frontmatter.
 
@@ -70,9 +80,17 @@ def render_note(
         date=date.isoformat(),
         tags=list(summary.tags),
     )
+    source_links = []
     if archive_link:
         meta["archive"] = f"[[{archive_link}]]"
-        body_sections.append(f"## Source\n\n[[{archive_link}|Full source]]")
+        source_links.append(f"[[{archive_link}|Full source]]")
+    if original_link:
+        # A link, not an `![[...]]` embed: an embed opens a PDF viewer inside
+        # every note, which is a lot of page for something wanted occasionally.
+        meta["file"] = f"[[{original_link}]]"
+        source_links.append(f"[[{original_link}|Original file]]")
+    if source_links:
+        body_sections.append("## Source\n\n" + " · ".join(source_links))
 
     return frontmatter.dumps(frontmatter.Post("\n\n".join(body_sections), **meta))
 
@@ -121,6 +139,7 @@ class TrashedNote:
     source: str = ""
     date: str = ""
     has_archive: bool = False
+    has_file: bool = False
 
 
 class Vault:
@@ -166,11 +185,14 @@ class Vault:
         archive: str | None = None,
         kind: str = "article",
         source_type: str | None = None,
+        original: bytes | None = None,
     ) -> Path:
         """Render and write a note flat at the vault root; refuse duplicates.
 
         When `archive` (the canonical Markdown of the source) is given, it's stored
         as a companion `sources/<note-stem>.source.md` and linked from the note.
+        `original` (the file the text came from, e.g. the PDF itself) is stored the
+        same way as `sources/<note-stem>.pdf`, so one note owns a predictable trio.
         Returns the path of the written note. Raises DuplicateNoteError if a note
         for the same source URL already exists.
         """
@@ -195,8 +217,21 @@ class Vault:
             )
             archive_link = f"{SOURCES_DIR}/{stem}.source"
 
+        original_link = None
+        if original:
+            folder = self.root / SOURCES_DIR
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / f"{stem}{ORIGINAL_SUFFIX}").write_bytes(original)
+            original_link = f"{SOURCES_DIR}/{stem}{ORIGINAL_SUFFIX}"
+
         path.write_text(
-            render_note(summary, source_url, date, archive_link=archive_link),
+            render_note(
+                summary,
+                source_url,
+                date,
+                archive_link=archive_link,
+                original_link=original_link,
+            ),
             encoding="utf-8",
         )
         return path
@@ -214,9 +249,9 @@ class Vault:
             return None
         self.trash_dir.mkdir(parents=True, exist_ok=True)
         target = _unique_path(self.trash_dir, note.name)
-        archive = self.root / SOURCES_DIR / f"{note.stem}.source.md"
-        if archive.is_file():
-            archive.rename(self.trash_dir / f"{target.stem}.source.md")
+        for companion, suffix in self._companions(self.root / SOURCES_DIR, note.stem):
+            if companion.is_file():
+                companion.rename(self.trash_dir / f"{target.stem}{suffix}")
         note.rename(target)
         return target.name
 
@@ -235,6 +270,7 @@ class Vault:
                     source=_read_field(path, "source") or "",
                     date=_read_field(path, "date") or "",
                     has_archive=(self.trash_dir / f"{path.stem}.source.md").is_file(),
+                    has_file=(self.trash_dir / f"{path.stem}{ORIGINAL_SUFFIX}").is_file(),
                 )
             )
         notes.sort(key=lambda n: (n.date, n.name), reverse=True)
@@ -251,26 +287,35 @@ class Vault:
         source = self.trash_dir / name
         # A replacement may have been captured since; never overwrite it.
         target = self._free_name(name)
-        archive = self.trash_dir / f"{source.stem}.source.md"
-        if archive.is_file():
-            folder = self.root / SOURCES_DIR
-            folder.mkdir(parents=True, exist_ok=True)
-            archive.rename(folder / f"{target.stem}.source.md")
+        folder = self.root / SOURCES_DIR
+        for companion, suffix in self._companions(self.trash_dir, source.stem):
+            if companion.is_file():
+                folder.mkdir(parents=True, exist_ok=True)
+                companion.rename(folder / f"{target.stem}{suffix}")
         source.rename(target)
         return target
 
-    def _free_name(self, filename: str) -> Path:
-        """A root path whose note *and* archive names are both free.
+    @staticmethod
+    def _companions(folder: Path, stem: str) -> list[tuple[Path, str]]:
+        """The archive and the original file that belong to a note stem."""
+        return [
+            (folder / f"{stem}.source.md", ".source.md"),
+            (folder / f"{stem}{ORIGINAL_SUFFIX}", ORIGINAL_SUFFIX),
+        ]
 
-        An archive is found at `sources/<note stem>.source.md`, so the pair has to
-        move together: a free note name beside an occupied archive name would
-        restore a note pointing at someone else's text.
+    def _free_name(self, filename: str) -> Path:
+        """A root path whose note, archive and original-file names are all free.
+
+        The companions are found by the note's stem, so the whole set has to move
+        together: a free note name beside an occupied archive name would restore a
+        note pointing at someone else's text.
         """
         stem = Path(filename).stem
         folder = self.root / SOURCES_DIR
         for suffix in ["", *[f"-{n}" for n in range(2, 1000)]]:
             note = self.root / f"{stem}{suffix}.md"
-            if not note.exists() and not (folder / f"{stem}{suffix}.source.md").exists():
+            taken = any(path.exists() for path, _ in self._companions(folder, stem + suffix))
+            if not note.exists() and not taken:
                 return note
         raise FileExistsError(f"Too many filename collisions for {filename}")
 

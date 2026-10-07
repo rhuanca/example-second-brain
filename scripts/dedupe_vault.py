@@ -33,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import frontmatter
 
 from second_brain.urls import dedup_key
-from second_brain.vault import SOURCES_DIR
+from second_brain.vault import ORIGINAL_SUFFIX, SOURCES_DIR
 
 
 @dataclass
@@ -45,6 +45,11 @@ class Note:
     @property
     def archive(self) -> Path:
         return self.path.parent / SOURCES_DIR / f"{self.path.stem}.source.md"
+
+    @property
+    def original(self) -> Path:
+        """The stored source file (a PDF), when the capture kept one."""
+        return self.path.parent / SOURCES_DIR / f"{self.path.stem}{ORIGINAL_SUFFIX}"
 
     def sort_key(self) -> tuple[str, str]:
         # Undated notes sort last, so a dated note is preferred as the keeper.
@@ -99,6 +104,7 @@ def dedupe(vault_path: Path, *, apply: bool = False) -> list[Group]:
         for note in group.drop:
             note.path.unlink(missing_ok=True)
             note.archive.unlink(missing_ok=True)
+            note.original.unlink(missing_ok=True)  # or the binary is orphaned
     return groups
 
 

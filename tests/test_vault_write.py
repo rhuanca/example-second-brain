@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from second_brain.models import Summary
-from second_brain.vault import SOURCES_DIR, DuplicateNoteError, Vault
+from second_brain.vault import ORIGINAL_SUFFIX, SOURCES_DIR, DuplicateNoteError, Vault
 
 DATE = datetime.date(2026, 6, 30)
 
@@ -155,10 +155,15 @@ class TrashTest(unittest.TestCase):
         self.root = Path(self._tmp.name)
         self.vault = Vault(self.root)
 
-    def write(self, title="Building Agentic Systems", archive="the captured text"):
+    def write(self, title="Building Agentic Systems", archive="the captured text", original=None):
         return self.vault.write_note(
-            _summary(title=title), f"https://example.com/{title}", DATE, archive=archive
+            _summary(title=title), f"https://example.com/{title}", DATE,
+            archive=archive, original=original,
         )
+
+    def paths(self, note):
+        folder = self.root / SOURCES_DIR
+        return (note, folder / f"{note.stem}.source.md", folder / f"{note.stem}{ORIGINAL_SUFFIX}")
 
     def test_trashing_takes_the_archive_with_it_and_hides_both(self):
         note = self.write()
@@ -240,3 +245,75 @@ class TrashTest(unittest.TestCase):
     def test_an_empty_vault_has_an_empty_trash(self):
         self.assertEqual(self.vault.trashed(), [])
         self.assertEqual(self.vault.empty_trash(), 0)
+
+
+PDF_BYTES = b"%PDF-1.4 pretend bytes with a diagram in them"
+
+
+class OriginalFileTest(unittest.TestCase):
+    """The text is what the library reads; the file is where the diagrams are."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.vault = Vault(self.root)
+
+    def write(self, title="Building Agentic Systems", original=PDF_BYTES):
+        return self.vault.write_note(
+            _summary(title=title), f"https://example.com/{title}", DATE,
+            archive="the captured text", original=original,
+        )
+
+    def test_the_file_is_stored_beside_the_archive_and_linked(self):
+        note = self.write()
+        stored = self.root / SOURCES_DIR / f"{note.stem}{ORIGINAL_SUFFIX}"
+
+        self.assertEqual(stored.read_bytes(), PDF_BYTES)
+        body = note.read_text()
+        self.assertIn(f"file: '[[{SOURCES_DIR}/{note.stem}.pdf]]'", body)
+        self.assertIn("Original file", body)
+        self.assertIn("Full source", body)  # the archive link is still there
+
+    def test_a_note_without_an_original_is_unchanged(self):
+        note = self.write(original=None)
+        self.assertFalse((self.root / SOURCES_DIR / f"{note.stem}{ORIGINAL_SUFFIX}").exists())
+        self.assertNotIn("file:", note.read_text())
+        self.assertIn("Full source", note.read_text())
+
+    def test_trash_restore_and_empty_carry_the_whole_trio(self):
+        note = self.write()
+        self.vault.trash(note)
+
+        trashed = self.vault.trashed()[0]
+        self.assertTrue(trashed.has_archive)
+        self.assertTrue(trashed.has_file)
+        self.assertEqual(
+            sorted(p.suffix for p in self.vault.trash_dir.glob("*")), [".md", ".md", ".pdf"]
+        )
+        self.assertEqual(list((self.root / SOURCES_DIR).glob("*")), [])
+
+        restored = self.vault.restore(note.name)
+        stored = self.root / SOURCES_DIR / f"{restored.stem}{ORIGINAL_SUFFIX}"
+        self.assertEqual(stored.read_bytes(), PDF_BYTES)
+
+        self.vault.trash(restored)
+        self.vault.empty_trash()
+        self.assertEqual(list(self.vault.trash_dir.glob("*")), [])
+
+    def test_restore_skips_a_stem_whose_file_slot_is_taken(self):
+        """A note name can be free while its companions are not: restoring onto
+        that stem would hand the note someone else's PDF."""
+        note = self.write()
+        self.vault.trash(note)
+        orphan = self.root / SOURCES_DIR / f"{note.stem}{ORIGINAL_SUFFIX}"
+        orphan.parent.mkdir(parents=True, exist_ok=True)
+        orphan.write_bytes(b"%PDF someone else")
+
+        restored = self.vault.restore(note.name)
+
+        self.assertNotEqual(restored.stem, note.stem)
+        self.assertEqual(orphan.read_bytes(), b"%PDF someone else")  # untouched
+        self.assertEqual(
+            (self.root / SOURCES_DIR / f"{restored.stem}{ORIGINAL_SUFFIX}").read_bytes(), PDF_BYTES
+        )

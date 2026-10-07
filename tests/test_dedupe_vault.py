@@ -93,6 +93,20 @@ class DedupeVaultTest(unittest.TestCase):
         self.assertFalse(b.exists())
         self.assertFalse(b_archive.exists())
 
+    def test_apply_removes_a_stored_original_too(self):
+        """A dropped note's PDF would otherwise sit in sources/ forever."""
+        _note(self.vault, "a", "https://youtu.be/ve7AA01vplE?si=A", "2026-08-22")
+        b = _note(self.vault, "b", "https://youtu.be/ve7AA01vplE?si=B", "2026-08-24")
+        folder = self.vault / "sources"
+        folder.mkdir(exist_ok=True)
+        b_pdf = folder / "b.pdf"
+        b_pdf.write_bytes(b"%PDF-1.4")
+
+        dedupe_vault.dedupe(self.vault, apply=True)
+
+        self.assertFalse(b.exists())
+        self.assertFalse(b_pdf.exists())
+
     def test_apply_is_idempotent(self):
         _note(self.vault, "a", "https://youtu.be/ve7AA01vplE?si=A", "2026-08-22")
         _note(self.vault, "b", "https://youtu.be/ve7AA01vplE?si=B", "2026-08-24")
