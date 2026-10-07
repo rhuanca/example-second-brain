@@ -26,6 +26,9 @@ class Article:
     text: str  # the canonical Markdown archive body
     source: str = "article"  # source_type tag: article / youtube / medium / pdf
     kind: str = "article"  # what the archive is: article / transcript / pdf
+    # The file this text was read from, when there was one (a PDF). Kept so the
+    # diagrams survive: extraction gives back words, not figures.
+    original: bytes | None = None
 
 
 def fetch(url: str, *, downloader=None, extractor=None) -> Article:

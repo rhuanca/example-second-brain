@@ -117,6 +117,7 @@ def handle_document(
         article = extract(data, filename)
     except FetchError as exc:
         return PipelineResult(f"⚠️ Couldn't read that file: {exc}")
+    article.original = data  # keep the file itself: the text has no diagrams
 
     return _capture(
         article, source, vault=vault, settings=settings, summarize=summarize, today=today
@@ -164,6 +165,7 @@ def _capture(
             archive=article.text,
             kind=article.kind,
             source_type=article.source,
+            original=article.original,
         )
     except DuplicateNoteError as exc:
         return PipelineResult(

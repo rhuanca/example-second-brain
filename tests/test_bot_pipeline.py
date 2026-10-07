@@ -246,6 +246,14 @@ class HandleDocumentTest(unittest.TestCase):
         self.assertIn(f"source: file:sha256-{hashlib.sha256(self.PDF).hexdigest()}", note)
         self.assertIn("#pdf", result.reply)
 
+    def test_the_pdf_itself_is_kept_beside_the_note(self):
+        """Extraction gives back words; the diagrams only exist in the file."""
+        result = self._run()
+        stored = self.vault.root / "sources" / f"{result.note_path.stem}.pdf"
+
+        self.assertEqual(stored.read_bytes(), self.PDF)
+        self.assertIn("Original file", result.note_path.read_text())
+
     def test_the_text_is_archived_beside_the_note(self):
         result = self._run()
         archive = self.vault.root / "sources" / f"{result.note_path.stem}.source.md"
