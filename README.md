@@ -73,8 +73,12 @@ You'll get a summary reply, and a note will appear under
   transcript for caption-less videos). If no transcript can be produced, the bot
   says so and saves nothing.
 - **PDFs**: send one to the bot as a file and it's read, summarized and filed
-  like any link — the text layer only, so a scanned PDF is reported rather than
-  saved. The same file sent twice is caught by its content hash, however it was
+  like any link. **A scan is read too**: when a PDF has no text layer — a
+  screenshot export, a photographed page — its pages go to Claude's vision as
+  images, up to 20 pages, and the transcription becomes the note's archive
+  (figures described in one line each). It uses Haiku, so a dozen pages costs
+  about a cent; `OCR_MODEL` overrides it, and a longer document is refused with
+  its page count rather than quietly charged for. The same file sent twice is caught by its content hash, however it was
   renamed, and it needs the `pdf` extra (`./deploy.sh` installs it). A **link**
   to a PDF works too and is tagged the same way.
   **The file itself is kept** at `sources/<note>.pdf` and linked from the note,
