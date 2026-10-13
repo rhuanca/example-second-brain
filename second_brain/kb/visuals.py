@@ -48,7 +48,7 @@ REPULSION = 20.0
 # Refinement compares every pair, so it is quadratic. Past this many notes the
 # map is a smear anyway and the time is better not spent.
 MAX_REFINE = 900
-SOURCE_ORDER = ("youtube", "article", "medium", "pdf")
+SOURCE_ORDER = ("youtube", "article", "medium", "pdf", "talk")
 _MONTH = re.compile(r"^(\d{4})-(\d{2})")
 
 # --- colour -------------------------------------------------------------------

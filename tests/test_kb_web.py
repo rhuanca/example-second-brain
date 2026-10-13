@@ -215,6 +215,18 @@ class PagesTest(_Client):
     def test_unknown_topic_is_404(self):
         self.get("/notes?topic=nope", status=404)
 
+    def test_a_talk_gets_its_own_icon_and_facet(self):
+        """Slides plus a transcript are their own kind of capture, not a PDF."""
+        write_note(self.root, "talk", "A Conference Talk", "slides and what was said",
+                   date="2026-09-01", tags=("talk", "agents"))
+        self._client.app.state.library.refresh_if_stale(force=True)
+
+        notes = self.get("/notes")
+        self.assertIn("A Conference Talk", notes)
+        self.assertIn("source=talk", notes)  # the facet is offered
+        self.assertIn("A Conference Talk", self.get("/notes?source=talk"))
+        self.assertNotIn("Agent memory", self.get("/notes?source=talk"))
+
     def test_source_and_month_facets(self):
         html = self.get("/notes")
         self.assertIn('href="/notes?source=youtube"', html)

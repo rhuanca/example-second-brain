@@ -85,6 +85,11 @@ You'll get a summary reply, and a note will appear under
   because the diagrams only exist in the original: open it in Obsidian, or
   download it from the note page. Linked PDFs are downloaded alongside their
   text (up to 25MB); losing that download costs the file, never the capture.
+- **A talk is one note.** Select a slide PDF *and* a `.txt`/`.md` transcript in
+  Telegram and send them together: the bot waits a moment for both, then files a
+  single note tagged `talk`, with `## Slides` and `## Transcript` in its archive
+  and the deck kept as the stored file. The summary is written over both, so key
+  points can draw on what was said as well as what was shown.
 - **Medium links** work out of the box for free posts. For **member-only**
   articles, set `MEDIUM_COOKIE` (see below) so the bot fetches the full text you
   pay for; without it, member-only links only yield the public teaser.
