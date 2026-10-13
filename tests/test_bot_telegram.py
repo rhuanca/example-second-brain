@@ -225,7 +225,7 @@ class DocumentHandlerTest(unittest.TestCase):
 
     def handler(self, **kwargs):
         kwargs.setdefault(
-            "extract", lambda data, name: Article("A Paper", "the paper text" + FILLER, source="pdf", kind="pdf")
+            "extract", lambda data, name, **kw: Article("A Paper", "the paper text" + FILLER, source="pdf", kind="pdf")
         )
         kwargs.setdefault("summarize", lambda *a, **k: _summary())
         kwargs.setdefault("today", lambda: datetime.date(2026, 6, 30))
@@ -270,7 +270,7 @@ class DocumentHandlerTest(unittest.TestCase):
     def test_a_scan_is_reported_and_nothing_is_saved(self):
         from second_brain.fetcher import FetchError
 
-        def no_text(data, name):
+        def no_text(data, name, **kw):
             raise FetchError("That PDF has no text layer — it looks like a scan.")
 
         message = self.run_handler(FakeDocument(), extract=no_text)
@@ -363,7 +363,7 @@ class ReactionTest(unittest.TestCase):
         handler = make_document_handler(
             self.settings,
             self.vault,
-            extract=lambda data, name: Article("A Paper", "text" + FILLER, source="pdf"),
+            extract=lambda data, name, **kw: Article("A Paper", "text" + FILLER, source="pdf"),
             summarize=lambda *a, **k: _summary(),
             today=lambda: datetime.date(2026, 6, 30),
         )

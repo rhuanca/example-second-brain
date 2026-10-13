@@ -19,7 +19,9 @@ from pathlib import Path
 from second_brain.ask import ask as default_ask
 from second_brain.config import Settings
 from second_brain.fetcher import FetchError, is_thin
+from second_brain.ocr import MAX_OCR_PAGES, transcribe
 from second_brain.pdf import extract_pdf as default_extract
+from second_brain.pdf import page_images
 from second_brain.sources import fetch as default_fetch
 from second_brain.summarizer import SummarizerError
 from second_brain.summarizer import summarize as default_summarize
@@ -99,6 +101,18 @@ def handle_url(
     )
 
 
+def read_with_vision(settings: Settings, data: bytes, *, announce=None) -> str:
+    """Transcribe a PDF that has no text layer, page by page.
+
+    Slow enough to be worth announcing: a dozen pages is about a minute, and a
+    silent minute looks like a dead bot.
+    """
+    images = page_images(data, max_pages=MAX_OCR_PAGES + 1)
+    if announce:
+        announce(len(images))
+    return transcribe(images, api_key=settings.anthropic_api_key)
+
+
 def handle_document(
     data: bytes,
     filename: str,
@@ -108,6 +122,7 @@ def handle_document(
     extract=default_extract,
     summarize=default_summarize,
     today=None,
+    ocr=None,
 ) -> PipelineResult:
     """Run capture → summarize → save for an uploaded file.
 
@@ -124,7 +139,7 @@ def handle_document(
         )
 
     try:
-        article = extract(data, filename)
+        article = extract(data, filename, ocr=ocr) if ocr else extract(data, filename)
     except FetchError as exc:
         return PipelineResult(f"⚠️ Couldn't read that file: {exc}", outcome=FAILED)
     article.original = data  # keep the file itself: the text has no diagrams
@@ -316,6 +331,7 @@ def make_document_handler(
     extract=default_extract,
     summarize=default_summarize,
     today=None,
+    ocr=None,
 ):
     """Create the async handler for uploaded files (PDFs today)."""
 
@@ -335,6 +351,19 @@ def make_document_handler(
             return
         await _react(message, WORKING)
 
+        loop = asyncio.get_running_loop()
+
+        def announce(pages: int) -> None:
+            # From the worker thread: the page count is the first thing known
+            # about a scan, and it explains the minute that follows.
+            asyncio.run_coroutine_threadsafe(
+                message.reply_text(
+                    f"📄 No text layer — reading {pages} page"
+                    f"{'' if pages == 1 else 's'} with OCR, this takes a moment."
+                ),
+                loop,
+            )
+
         async def work():
             handle = await document.get_file()
             data = bytes(await handle.download_as_bytearray())
@@ -347,6 +376,9 @@ def make_document_handler(
                 extract=extract,
                 summarize=summarize,
                 today=today,
+                ocr=ocr or (
+                    lambda payload: read_with_vision(settings, payload, announce=announce)
+                ),
             )
 
         result = await _run_with_typing(message, work())

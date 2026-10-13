@@ -232,7 +232,7 @@ class HandleDocumentTest(unittest.TestCase):
     def _run(self, data=None, filename="paper.pdf", **kw):
         kw.setdefault(
             "extract",
-            lambda data, name: Article("A Paper", "the paper text" + FILLER, source="pdf", kind="pdf"),
+            lambda data, name, **kw: Article("A Paper", "the paper text" + FILLER, source="pdf", kind="pdf"),
         )
         kw.setdefault("summarize", lambda *a, **k: _summary())
         kw.setdefault("today", lambda: DATE)
@@ -282,8 +282,43 @@ class HandleDocumentTest(unittest.TestCase):
         self.assertTrue(other.ok)
         self.assertEqual(len(list(self.vault.iter_notes())), 2)
 
+    def test_a_scan_is_read_by_ocr_and_filed(self):
+        """The case this exists for: 12 pages of bitmaps with no text layer."""
+        from second_brain.pdf import extract_pdf
+
+        pages = ["(scanned page)"]  # what pypdf finds: nothing worth having
+        transcript = "# Agents and choice\n" + FILLER
+
+        result = self._run(
+            extract=lambda data, name, **kw: extract_pdf(
+                data, name, reader=lambda _: (pages, None), **kw
+            ),
+            ocr=lambda data: transcript,
+        )
+
+        self.assertTrue(result.ok)
+        archive = self.vault.root / "sources" / f"{result.note_path.stem}.source.md"
+        self.assertIn("Agents and choice", archive.read_text())
+        self.assertEqual(
+            (self.vault.root / "sources" / f"{result.note_path.stem}.pdf").read_bytes(), self.PDF
+        )
+
+    def test_ocr_is_not_paid_for_when_the_text_layer_is_fine(self):
+        from second_brain.pdf import extract_pdf
+
+        asked = []
+        result = self._run(
+            extract=lambda data, name, **kw: extract_pdf(
+                data, name, reader=lambda _: (["A readable paper. " + FILLER], None), **kw
+            ),
+            ocr=lambda data: asked.append(data) or "unused",
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(asked, [])
+
     def test_a_pdf_that_cannot_be_read_saves_nothing(self):
-        def no_text(data, name):
+        def no_text(data, name, **kw):
             raise FetchError("That PDF has no text layer — it looks like a scan.")
 
         result = self._run(extract=no_text)
@@ -293,7 +328,7 @@ class HandleDocumentTest(unittest.TestCase):
         self.assertEqual(list(self.vault.iter_notes()), [])
 
     def test_scraps_are_refused_as_they_are_for_links(self):
-        result = self._run(extract=lambda data, name: Article("x", "two words", source="pdf"))
+        result = self._run(extract=lambda data, name, **kw: Article("x", "two words", source="pdf"))
         self.assertIn("almost no text", result.reply)
         self.assertEqual(list(self.vault.iter_notes()), [])
 
@@ -329,7 +364,7 @@ class OutcomeTest(unittest.TestCase):
         common = dict(
             vault=self.vault,
             settings=self.settings,
-            extract=lambda data, name: Article("A Paper", "text" + FILLER, source="pdf"),
+            extract=lambda data, name, **kw: Article("A Paper", "text" + FILLER, source="pdf"),
             summarize=lambda *a, **k: _summary(),
             today=lambda: DATE,
         )
