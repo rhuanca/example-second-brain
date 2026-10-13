@@ -27,14 +27,29 @@ MISSING_DEPENDENCY = (
 NO_TEXT_LAYER = (
     "That PDF has no text layer — it looks like a scan, so there is nothing to read."
 )
+NO_PAGE_IMAGES = "That PDF has neither text nor page images I can read."
+
+# What Claude's vision is charged on: a longer edge than this costs more tokens
+# for no gain, because the API resizes to roughly this anyway.
+MAX_EDGE = 1568
+JPEG_QUALITY = 80
 
 
-def extract_pdf(data: bytes, filename: str = "", *, reader=None) -> Article:
-    """The text of a PDF, page by page. Raises FetchError if there is none."""
+def extract_pdf(data: bytes, filename: str = "", *, reader=None, ocr=None) -> Article:
+    """The text of a PDF, page by page. Raises FetchError if there is none.
+
+    A scan has no text to find. When `ocr` is supplied it is asked to read the
+    page images instead — the decision to spend money on that belongs to the
+    capture pipeline, not to a parser, so this only calls what it was handed.
+    """
     pages, meta_title = (reader or _default_reader)(data)
     text = "\n\n".join(page.strip() for page in pages if page and page.strip()).strip()
     if not text or is_thin(text):
-        raise FetchError(NO_TEXT_LAYER)
+        if ocr is None:
+            raise FetchError(NO_TEXT_LAYER)
+        text = ocr(data).strip()
+        if not text or is_thin(text):
+            raise FetchError(NO_TEXT_LAYER)
     return Article(
         title=_title(meta_title, text, filename),
         text=text,
@@ -75,6 +90,59 @@ def _title(meta_title: str | None, text: str, filename: str) -> str:
     if meta and not looks_like_a_filename(meta):
         return meta
     return title_from(text, stem or filename or "Untitled PDF")
+
+
+def page_images(data: bytes, *, max_pages: int, reader=None) -> list[bytes]:
+    """One JPEG per page, for a PDF whose pages are pictures.
+
+    A scan is one image per page; when a page holds several, the largest is the
+    page and the rest are decoration, so that is what goes to the model. Pages
+    are downscaled before they are sent: the bill is per pixel, and 4K costs more
+    than it is worth.
+    """
+    images = (reader or _default_page_images)(data, max_pages=max_pages, max_edge=MAX_EDGE)
+    if not images:
+        raise FetchError(NO_PAGE_IMAGES)
+    return images
+
+
+def _default_page_images(data: bytes, *, max_pages: int, max_edge: int) -> list[bytes]:
+    try:
+        from PIL import Image
+        from pypdf import PdfReader
+    except ImportError as exc:
+        raise FetchError(MISSING_DEPENDENCY) from exc
+
+    import io
+
+    out: list[bytes] = []
+    document = PdfReader(io.BytesIO(data))
+    for page in document.pages[:max_pages]:
+        biggest = None
+        for embedded in page.images:
+            try:
+                image = Image.open(io.BytesIO(embedded.data))
+            except Exception:  # noqa: BLE001 -- an image we cannot open is not the page
+                continue
+            if biggest is None or image.width * image.height > biggest.width * biggest.height:
+                biggest = image
+        if biggest is None:
+            continue
+        out.append(_as_jpeg(biggest, max_edge))
+    return out
+
+
+def _as_jpeg(image, max_edge: int) -> bytes:
+    import io
+
+    if max(image.size) > max_edge:
+        scale = max_edge / max(image.size)
+        image = image.resize((max(int(image.width * scale), 1), max(int(image.height * scale), 1)))
+    if image.mode not in ("RGB", "L"):
+        image = image.convert("RGB")
+    buffer = io.BytesIO()
+    image.save(buffer, format="JPEG", quality=JPEG_QUALITY)
+    return buffer.getvalue()
 
 
 def download(url: str, *, get=None) -> bytes | None:

@@ -5,10 +5,12 @@ from types import SimpleNamespace
 from second_brain.fetcher import FetchError
 from second_brain.pdf import (
     MAX_FILE_BYTES,
+    NO_PAGE_IMAGES,
     MISSING_DEPENDENCY,
     NO_TEXT_LAYER,
     download,
     extract_pdf,
+    page_images,
     looks_like_a_filename,
     title_from,
 )
@@ -132,3 +134,65 @@ class DownloadTest(unittest.TestCase):
             raise ConnectionError("down")
 
         self.assertIsNone(download("https://x/p.pdf", get=boom))
+
+
+class ScannedPdfTest(unittest.TestCase):
+    """A scan has no text to find, so the expensive path exists — and must stay
+    off for a PDF that reads perfectly well on its own."""
+
+    SCAN = [""]  # what pypdf returns for a page that is a picture
+
+    def test_ocr_reads_what_the_text_layer_could_not(self):
+        asked = []
+
+        article = extract_pdf(
+            b"%PDF",
+            "scan.pdf",
+            reader=reader(self.SCAN),
+            ocr=lambda data: asked.append(data) or ("# Agents and choice\n" + BODY),
+        )
+
+        self.assertEqual(asked, [b"%PDF"])
+        self.assertEqual(article.title, "Agents and choice")
+        self.assertIn("Agents and choice", article.text)
+        self.assertEqual((article.source, article.kind), ("pdf", "pdf"))
+
+    def test_a_readable_pdf_never_pays_for_ocr(self):
+        asked = []
+
+        article = extract_pdf(
+            b"%PDF", "paper.pdf", reader=reader([BODY]), ocr=lambda data: asked.append(data) or "x"
+        )
+
+        self.assertEqual(asked, [])  # the model was never called
+        self.assertIn("A real paper", article.text)
+
+    def test_without_an_ocr_hook_it_still_says_it_is_a_scan(self):
+        with self.assertRaises(FetchError) as caught:
+            extract_pdf(b"%PDF", "scan.pdf", reader=reader(self.SCAN))
+        self.assertEqual(str(caught.exception), NO_TEXT_LAYER)
+
+    def test_ocr_that_also_comes_back_empty_is_reported_as_a_scan(self):
+        with self.assertRaises(FetchError) as caught:
+            extract_pdf(b"%PDF", "scan.pdf", reader=reader(self.SCAN), ocr=lambda data: "   ")
+        self.assertEqual(str(caught.exception), NO_TEXT_LAYER)
+
+
+class PageImagesTest(unittest.TestCase):
+    def test_the_pages_are_handed_back_in_order(self):
+        seen = {}
+
+        def fake(data, *, max_pages, max_edge):
+            seen.update(data=data, max_pages=max_pages, max_edge=max_edge)
+            return [b"jpeg-1", b"jpeg-2"]
+
+        images = page_images(b"%PDF", max_pages=20, reader=fake)
+
+        self.assertEqual(images, [b"jpeg-1", b"jpeg-2"])
+        self.assertEqual(seen["max_pages"], 20)
+        self.assertEqual(seen["max_edge"], 1568)  # what the vision API charges on
+
+    def test_a_pdf_with_neither_text_nor_pictures(self):
+        with self.assertRaises(FetchError) as caught:
+            page_images(b"%PDF", max_pages=20, reader=lambda data, **kw: [])
+        self.assertEqual(str(caught.exception), NO_PAGE_IMAGES)
