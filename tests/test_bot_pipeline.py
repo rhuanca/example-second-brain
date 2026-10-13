@@ -333,6 +333,81 @@ class HandleDocumentTest(unittest.TestCase):
         self.assertEqual(list(self.vault.iter_notes()), [])
 
 
+class HandleTalkTest(unittest.TestCase):
+    """A deck and a transcript are one note: the vault stores one archive and one
+    original, which is exactly their shape."""
+
+    SLIDES = b"%PDF-1.4 deck bytes"
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.vault = Vault(Path(self._tmp.name))
+        self.settings = _settings(self._tmp.name)
+
+    def talk(self, transcript=b"So the first thing to say is that agents forget."):
+        from second_brain.capture import Upload, classify
+
+        return classify([
+            Upload("deck.pdf", "application/pdf", self.SLIDES),
+            Upload("talk.txt", "text/plain", transcript),
+        ])
+
+    def _run(self, talk=None, **kw):
+        from second_brain.bot import handle_talk
+
+        kw.setdefault(
+            "extract",
+            lambda data, name, **k: Article("Agents Forget", "Slide one\nSlide two" + FILLER, source="pdf"),
+        )
+        kw.setdefault("summarize", lambda *a, **k: _summary())
+        kw.setdefault("today", lambda: DATE)
+        return handle_talk(talk or self.talk(), vault=self.vault, settings=self.settings, **kw)
+
+    def test_one_note_holds_both(self):
+        result = self._run()
+
+        self.assertTrue(result.ok)
+        self.assertEqual(len(list(self.vault.iter_notes())), 1)
+        archive = (self.vault.root / "sources" / f"{result.note_path.stem}.source.md").read_text()
+        self.assertIn("## Slides", archive)
+        self.assertIn("Slide two", archive)
+        self.assertIn("## Transcript", archive)
+        self.assertIn("agents forget", archive)
+
+    def test_the_deck_is_kept_and_the_note_is_tagged_talk(self):
+        result = self._run()
+
+        stored = self.vault.root / "sources" / f"{result.note_path.stem}.pdf"
+        self.assertEqual(stored.read_bytes(), self.SLIDES)
+        self.assertIn("#talk", result.reply)
+
+    def test_the_same_pair_twice_is_a_duplicate(self):
+        self._run()
+        again = self._run()
+
+        self.assertFalse(again.ok)
+        self.assertIn("Already in your second brain", again.reply)
+        self.assertEqual(len(list(self.vault.iter_notes())), 1)
+
+    def test_an_empty_transcript_still_files_the_slides(self):
+        result = self._run(self.talk(transcript=b"   "))
+
+        self.assertTrue(result.ok)
+        archive = (self.vault.root / "sources" / f"{result.note_path.stem}.source.md").read_text()
+        self.assertIn("## Slides", archive)
+        self.assertNotIn("## Transcript", archive)
+
+    def test_unreadable_slides_say_so_and_save_nothing(self):
+        def boom(data, name, **kw):
+            raise FetchError("no text layer")
+
+        result = self._run(extract=boom)
+
+        self.assertIn("Couldn't read those slides", result.reply)
+        self.assertEqual(list(self.vault.iter_notes()), [])
+
+
 class OutcomeTest(unittest.TestCase):
     """What the bot's reaction reports: `ok` cannot tell "already saved" from
     "couldn't read it", and those deserve different emoji."""

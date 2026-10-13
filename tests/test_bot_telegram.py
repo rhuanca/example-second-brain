@@ -2,6 +2,7 @@ import asyncio
 import datetime
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -91,8 +92,9 @@ class FakeMessage:
         self.replies.append(text)
 
 
-def _update(user_id, text, document=None):
+def _update(user_id, text, document=None, media_group_id=None):
     message = FakeMessage(text, document=document)
+    message.media_group_id = media_group_id
     return SimpleNamespace(
         effective_user=SimpleNamespace(id=user_id) if user_id is not None else None,
         effective_message=message,
@@ -425,3 +427,86 @@ class TopicsCommandTest(unittest.TestCase):
         message = self.send("/topics undo", user_id=99)
         self.assertEqual(message.replies, [])
         self.assertEqual(message.reactions, [])
+
+
+class AlbumTest(unittest.TestCase):
+    """Telegram sends an album as separate updates sharing a media_group_id, so
+    the first one waits a moment for its siblings."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.settings = _settings(self._tmp.name)
+        self.vault = Vault(Path(self._tmp.name))
+        patch = unittest.mock.patch("second_brain.bot.ALBUM_WINDOW_SECONDS", 0.05)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def handler(self, **kw):
+        from second_brain.fetcher import Article
+
+        kw.setdefault(
+            "extract",
+            lambda data, name, **k: Article("A Talk", "Slide one" + FILLER, source="pdf"),
+        )
+        kw.setdefault("summarize", lambda *a, **k: _summary())
+        kw.setdefault("today", lambda: datetime.date(2026, 6, 30))
+        return make_document_handler(self.settings, self.vault, **kw)
+
+    def send(self, documents, group="album-1"):
+        """Deliver several documents as one album, as Telegram would."""
+        handler = self.handler()
+        messages = []
+
+        async def deliver():
+            tasks = []
+            for document in documents:
+                update, message = _update(42, None, document=document, media_group_id=group)
+                messages.append(message)
+                tasks.append(asyncio.create_task(handler(update, None)))
+                await asyncio.sleep(0)  # the next update arrives right behind it
+            await asyncio.gather(*tasks)
+
+        asyncio.run(deliver())
+        return messages
+
+    def test_a_deck_and_a_transcript_become_one_note(self):
+        first, second = self.send([
+            FakeDocument(b"%PDF-1.4 deck", "deck.pdf", "application/pdf"),
+            FakeDocument(b"what was said, at length", "talk.txt", "text/plain"),
+        ])
+
+        self.assertEqual(len(list(self.vault.iter_notes())), 1)
+        self.assertEqual(len(first.replies), 1)  # only the first message answers
+        self.assertEqual(second.replies, [])
+        self.assertIn("Agentic Patterns", first.replies[0])
+        self.assertEqual(first.reactions, [WORKING, REACTIONS[SAVED]])
+
+    def test_an_album_that_is_not_a_talk_says_what_to_do(self):
+        first, _ = self.send([
+            FakeDocument(b"%PDF-1.4 one", "a.pdf", "application/pdf"),
+            FakeDocument(b"%PDF-1.4 two", "b.pdf", "application/pdf"),
+        ])
+
+        self.assertIn("one note of them", first.replies[0])
+        self.assertEqual(list(self.vault.iter_notes()), [])
+
+    def test_a_single_document_is_untouched_by_any_of_this(self):
+        handler = self.handler()
+        update, message = _update(42, None, document=FakeDocument())
+        asyncio.run(handler(update, None))
+
+        self.assertEqual(len(list(self.vault.iter_notes())), 1)
+        self.assertEqual(message.reactions, [WORKING, REACTIONS[SAVED]])
+
+    def test_two_albums_do_not_bleed_into_each_other(self):
+        self.send([
+            FakeDocument(b"%PDF-1.4 deck", "deck.pdf", "application/pdf"),
+            FakeDocument(b"a transcript of some length", "talk.txt", "text/plain"),
+        ], group="album-1")
+        self.send([
+            FakeDocument(b"%PDF-1.4 other deck", "other.pdf", "application/pdf"),
+            FakeDocument(b"another transcript entirely", "other.txt", "text/plain"),
+        ], group="album-2")
+
+        self.assertEqual(len(list(self.vault.iter_notes())), 2)

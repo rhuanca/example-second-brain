@@ -17,8 +17,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from second_brain.ask import ask as default_ask
+from second_brain.capture import Talk, Upload, classify, merge, read_transcript
 from second_brain.config import Settings
-from second_brain.fetcher import FetchError, is_thin
+from second_brain.fetcher import Article, FetchError, is_thin
 from second_brain.ocr import MAX_OCR_PAGES, transcribe
 from second_brain.pdf import extract_pdf as default_extract
 from second_brain.pdf import page_images
@@ -34,6 +35,9 @@ logger = logging.getLogger(__name__)
 # failing somewhere inside the download.
 MAX_PDF_BYTES = 20 * 1024 * 1024
 PDF_MIME = "application/pdf"
+# Telegram delivers an album as separate updates sharing a media_group_id, a
+# fraction of a second apart. The first one waits this long for its siblings.
+ALBUM_WINDOW_SECONDS = 2.5
 NOT_A_PDF_MESSAGE = "📄 I can only read PDFs for now — send me a PDF or a link."
 TOO_BIG_MESSAGE = (
     f"📄 That file is over {MAX_PDF_BYTES // (1024 * 1024)}MB, which is more than "
@@ -98,6 +102,58 @@ def handle_url(
 
     return _capture(
         article, url, vault=vault, settings=settings, summarize=summarize, today=today
+    )
+
+
+def handle_talk(
+    talk: Talk,
+    *,
+    vault: Vault,
+    settings: Settings,
+    extract=default_extract,
+    summarize=default_summarize,
+    today=None,
+    ocr=None,
+) -> PipelineResult:
+    """File a deck and its transcript as one note.
+
+    The vault stores one archive and one original per note, which is exactly the
+    shape of a talk: the transcript is text and belongs in the archive, the deck
+    is a file and becomes the original.
+    """
+    today = today or _dt.date.today
+    digest = hashlib.sha256(talk.slides.data + talk.transcript.data).hexdigest()
+    source = f"file:sha256-{digest}"
+
+    existing = vault.find_by_url(source)
+    if existing is not None:
+        return PipelineResult(
+            f"📌 Already in your second brain: {existing.name}", outcome=DUPLICATE
+        )
+
+    try:
+        slides = (
+            extract(talk.slides.data, talk.slides.filename, ocr=ocr)
+            if ocr
+            else extract(talk.slides.data, talk.slides.filename)
+        )
+    except FetchError as exc:
+        return PipelineResult(f"⚠️ Couldn't read those slides: {exc}", outcome=FAILED)
+
+    article = Article(
+        title=slides.title,
+        text=merge(
+            slides.text,
+            read_transcript(talk.transcript.data, talk.transcript.filename),
+            slides_name=talk.slides.filename,
+            transcript_name=talk.transcript.filename,
+        ),
+        source="talk",
+        kind="talk",
+        original=talk.slides.data,
+    )
+    return _capture(
+        article, source, vault=vault, settings=settings, summarize=summarize, today=today
     )
 
 
@@ -333,7 +389,26 @@ def make_document_handler(
     today=None,
     ocr=None,
 ):
-    """Create the async handler for uploaded files (PDFs today)."""
+    """Create the async handler for uploaded files (a PDF, or a talk)."""
+    # Keyed by media group; memory-only and short-lived, because a restart during
+    # a two-second window costs one upload and persisting it would cost more.
+    albums: dict[str, list] = {}
+
+    async def collect(message, document) -> list | None:
+        """Gather an album, or return the single document to handle now.
+
+        None means "this message joined a group someone else is already waiting
+        on" -- only the first message of a group does the work.
+        """
+        group = getattr(message, "media_group_id", None)
+        if not group:
+            return [(message, document)]
+        first = group not in albums
+        albums.setdefault(group, []).append((message, document))
+        if not first:
+            return None
+        await asyncio.sleep(ALBUM_WINDOW_SECONDS)
+        return albums.pop(group, [])
 
     async def handle(update, context):
         user = update.effective_user
@@ -342,6 +417,13 @@ def make_document_handler(
         message = update.effective_message
         document = getattr(message, "document", None) if message else None
         if document is None:
+            return
+
+        batch = await collect(message, document)
+        if batch is None:
+            return  # a sibling in an album; the first message handles them all
+        if len(batch) > 1:
+            await _handle_album(batch)
             return
         if (getattr(document, "mime_type", "") or "") != PDF_MIME:
             await message.reply_text(NOT_A_PDF_MESSAGE)
@@ -382,6 +464,48 @@ def make_document_handler(
             )
 
         result = await _run_with_typing(message, work())
+        await _react(message, REACTIONS[result.outcome])
+        await message.reply_text(result.reply)
+
+    async def _handle_album(batch) -> None:
+        """Several files at once: a talk if they are a deck and a transcript."""
+        message = batch[0][0]
+        uploads = []
+        for _, document in batch:
+            if (getattr(document, "file_size", 0) or 0) > MAX_PDF_BYTES:
+                await message.reply_text(TOO_BIG_MESSAGE)
+                return
+            handle = await document.get_file()
+            uploads.append(
+                Upload(
+                    filename=getattr(document, "file_name", "") or "",
+                    mime=getattr(document, "mime_type", "") or "",
+                    data=bytes(await handle.download_as_bytearray()),
+                )
+            )
+
+        talk = classify(uploads)
+        if talk is None:
+            await message.reply_text(
+                "📄 Send a slide PDF together with a .txt or .md transcript and "
+                "I'll make one note of them. On their own, send them one at a time."
+            )
+            return
+
+        await _react(message, WORKING)
+        result = await _run_with_typing(
+            message,
+            asyncio.to_thread(
+                handle_talk,
+                talk,
+                vault=vault,
+                settings=settings,
+                extract=extract,
+                summarize=summarize,
+                today=today,
+                ocr=ocr,
+            ),
+        )
         await _react(message, REACTIONS[result.outcome])
         await message.reply_text(result.reply)
 
