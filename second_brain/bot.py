@@ -313,6 +313,48 @@ async def _react(message, emoji: str | None) -> None:
         logger.warning("reaction %r failed: %s: %s", emoji, type(exc).__name__, exc)
 
 
+UNEXPECTED_MESSAGE = (
+    "😢 That broke in a way I don't handle, so nothing was saved:\n\n{error}\n\n"
+    "The traceback is in the log: "
+    "journalctl --user -u rr-second-brain-telegram -n 50"
+)
+# Telegram caps a message at 4096 characters and an API error's repr can carry a
+# whole JSON body; the first line is the part that names the cause.
+MAX_ERROR_CHARS = 300
+
+
+def _never_silent(handle):
+    """Guarantee an answer to every message the bot has already reacted to.
+
+    Every failure the pipeline anticipates comes back as a PipelineResult. One it
+    does not -- the Anthropic API refusing the key, a socket dying mid-download --
+    escaped the handler instead, where python-telegram-bot logged it and told the
+    sender nothing. The 👀 then stayed on the message forever, which looks exactly
+    like a bot still working on it, and the journal was the only way to find out.
+    """
+
+    @functools.wraps(handle)
+    async def guarded(update, context):
+        try:
+            await handle(update, context)
+        except Exception as exc:  # noqa: BLE001 -- the last line before silence
+            logger.exception("handler failed: %s", type(exc).__name__)
+            message = getattr(update, "effective_message", None)
+            if message is None:
+                return
+            await _react(message, REACTIONS[FAILED])
+            # Reporting the failure must not become a second one.
+            with contextlib.suppress(Exception):
+                await message.reply_text(_unexpected_text(exc))
+
+    return guarded
+
+
+def _unexpected_text(exc: Exception) -> str:
+    detail = " ".join(str(exc).split())[:MAX_ERROR_CHARS] or "no further detail"
+    return UNEXPECTED_MESSAGE.format(error=f"{type(exc).__name__}: {detail}")
+
+
 async def _send_typing(message) -> None:
     """Show the 'typing…' chat action. Best-effort — never fails the request.
 
@@ -509,7 +551,7 @@ def make_document_handler(
         await _react(message, REACTIONS[result.outcome])
         await message.reply_text(result.reply)
 
-    return handle
+    return _never_silent(handle)
 
 
 def make_handler(
@@ -549,7 +591,7 @@ def make_handler(
         await _react(message, REACTIONS[result.outcome])
         await message.reply_text(result.reply)
 
-    return handle
+    return _never_silent(handle)
 
 
 TOPICS_USAGE = (
@@ -586,7 +628,7 @@ def make_ask_handler(settings: Settings, vault: Vault, *, run_ask=default_ask):
         await _react(message, None)
         await message.reply_text(reply)
 
-    return handle
+    return _never_silent(handle)
 
 
 def make_topics_handler(settings: Settings, vault: Vault):
@@ -626,7 +668,7 @@ def make_topics_handler(settings: Settings, vault: Vault):
         await _react(message, None)
         await message.reply_text(reply)
 
-    return handle
+    return _never_silent(handle)
 
 
 def _write_topics(vault: Vault, assignments: dict[str, list[str]]) -> list:

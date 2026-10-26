@@ -510,3 +510,45 @@ class AlbumTest(unittest.TestCase):
         ], group="album-2")
 
         self.assertEqual(len(list(self.vault.iter_notes())), 2)
+
+
+class NeverSilentTest(unittest.TestCase):
+    """An unexpected error still answers.
+
+    Anticipated failures come back as a PipelineResult. These are the other ones
+    -- the Anthropic API refusing the key, a socket dying mid-download -- which
+    used to escape the handler and leave the 👀 sitting there forever.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.settings = _settings(self._tmp.name)
+        self.vault = Vault(Path(self._tmp.name))
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _handler(self, error):
+        def explodes(*args, **kw):
+            raise error
+
+        return make_handler(self.settings, self.vault, fetch=explodes)
+
+    def test_an_error_the_pipeline_never_expected_is_still_answered(self):
+        handler = self._handler(RuntimeError("Your credit balance is too low"))
+        update, message = _update(42, "https://example.com/post")
+        with self.assertLogs("second_brain.bot", level="ERROR"):
+            asyncio.run(handler(update, None))
+
+        self.assertEqual(message.reactions, [WORKING, REACTIONS[FAILED]])
+        self.assertIn("RuntimeError", message.replies[0])
+        self.assertIn("Your credit balance is too low", message.replies[0])
+
+    def test_a_long_api_error_still_fits_a_telegram_message(self):
+        """Over 4096 characters Telegram rejects the reply, and the silence is back."""
+        handler = self._handler(RuntimeError("x" * 5000))
+        update, message = _update(42, "https://example.com/post")
+        with self.assertLogs("second_brain.bot", level="ERROR"):
+            asyncio.run(handler(update, None))
+
+        self.assertLess(len(message.replies[0]), 4096)
